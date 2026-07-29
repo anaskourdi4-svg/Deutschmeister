@@ -1,0 +1,6 @@
+{
+  "name": "DeutschMeister A1 - AI Vocabulary Trainer",
+  "description": "مساعد ذكاء اصطناعي تفاعلي لتعلم واختبار المفردات الألمانية لمستوى A1 مع تصحيح فوري للجنس القواعدي، الجمع، الأفعال الشاذة وحروف الجر",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
