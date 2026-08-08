@@ -1,71 +1,83 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle2, Layers } from 'lucide-react';
-import { VocabItem, ActiveTab, AppLanguage, VocabSet } from './types';
+import { VocabItem, ActiveTab, VocabSet, QuizQuestionSettings, DEFAULT_QUIZ_SETTINGS, getVocabItemKey } from './types';
 import { INITIAL_A1_VOCAB } from './data/defaultA1Vocab';
 import { Header } from './components/Header';
 import { FlashcardQuiz } from './components/FlashcardQuiz';
-import { SentenceBuilder } from './components/SentenceBuilder';
 import { VocabManager } from './components/VocabManager';
-import { GrammarCheatsheet } from './components/GrammarCheatsheet';
 import { TrainingStats } from './components/TrainingStats';
-import { SettingsModal } from './components/SettingsModal';
+import { DecksManager } from './components/DecksManager';
+import { SettingsManager } from './components/SettingsManager';
 
 const SETS_STORAGE_KEY = 'deutsch_meister_vocab_sets_v3';
 const ACTIVE_SET_KEY = 'deutsch_meister_active_set_v3';
-const LANG_STORAGE_KEY = 'deutsch_meister_app_lang_v1';
+const QUIZ_SETTINGS_KEY = 'deutsch_meister_quiz_settings_v1';
 
-// Helper to strictly ensure vocabulary items are only Nouns or Verbs
-const isNounOrVerb = (item: VocabItem) => {
-  const t = (item.type || '').toLowerCase();
-  return t === 'noun' || t === 'verb' || item.gender !== undefined;
+// Helper to ensure valid vocabulary items are retained
+const isValidVocabItem = (item: VocabItem) => {
+  return Boolean(item && item.word && item.word.trim());
 };
 
-const filterNounsAndVerbsOnly = (sets: VocabSet[]): VocabSet[] => {
+const filterValidVocabItems = (sets: VocabSet[]): VocabSet[] => {
   return sets.map(s => ({
     ...s,
-    items: (s.items || []).filter(isNounOrVerb)
+    items: (s.items || []).filter(isValidVocabItem)
   }));
 };
 
-const DEFAULT_DEMO_SET: VocabSet = {
-  id: 'set_demo_default',
-  name: 'Demo Set',
-  description: 'Default demo vocabulary set for A1 level',
-  createdAt: new Date().toISOString(),
-  items: INITIAL_A1_VOCAB.filter(isNounOrVerb),
-};
+const DEFAULT_DEMO_SETS: VocabSet[] = [
+  {
+    id: 'set_a1_demo',
+    name: 'A1 Essential Vocab',
+    levelGroup: 'A1',
+    description: 'Core A1 German vocabulary with articles and plural forms',
+    createdAt: new Date().toISOString(),
+    items: INITIAL_A1_VOCAB.filter(isValidVocabItem),
+  },
+  {
+    id: 'set_a2_demo',
+    name: 'A2 Daily Phrases',
+    levelGroup: 'A2',
+    description: 'Everyday conversations and A2 German vocabulary',
+    createdAt: new Date().toISOString(),
+    items: [],
+  },
+  {
+    id: 'set_b1_demo',
+    name: 'B1 Intermediate Words',
+    levelGroup: 'B1',
+    description: 'B1 level German vocabulary and conjugations',
+    createdAt: new Date().toISOString(),
+    items: [],
+  },
+  {
+    id: 'set_general_demo',
+    name: 'General & Custom Deck',
+    levelGroup: 'General',
+    description: 'Custom vocabulary collection',
+    createdAt: new Date().toISOString(),
+    items: [],
+  },
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('quiz');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // App language state
-  const [appLanguage, setAppLanguage] = useState<AppLanguage>(() => {
-    try {
-      const saved = localStorage.getItem(LANG_STORAGE_KEY);
-      if (saved && ['ar', 'en', 'de', 'es'].includes(saved)) {
-        return saved as AppLanguage;
-      }
-    } catch (e) {
-      console.warn('Failed to load saved language:', e);
-    }
-    return 'en';
-  });
-
-  // Vocab Sets state - Strictly filtered for Nouns and Verbs only
+  // Vocab Sets state
   const [vocabSets, setVocabSets] = useState<VocabSet[]>(() => {
     try {
       const savedSets = localStorage.getItem(SETS_STORAGE_KEY);
       if (savedSets) {
         const parsed = JSON.parse(savedSets);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return filterNounsAndVerbsOnly(parsed);
+          return filterValidVocabItems(parsed);
         }
       }
     } catch (e) {
       console.warn('Failed to load vocab sets:', e);
     }
-    return [DEFAULT_DEMO_SET];
+    return DEFAULT_DEMO_SETS;
   });
 
   // Active Set ID state
@@ -78,21 +90,44 @@ export default function App() {
     } catch (e) {
       console.warn('Failed to load active set ID:', e);
     }
-    return DEFAULT_DEMO_SET.id;
+    return DEFAULT_DEMO_SETS[0].id;
   });
 
-  // Ensure activeSetId is valid
-  const currentSet = vocabSets.find(s => s.id === activeSetId) || vocabSets[0] || DEFAULT_DEMO_SET;
-  const vocabList = (currentSet.items || []).filter(isNounOrVerb);
+  // Quiz Question Settings state
+  const [quizSettings, setQuizSettings] = useState<QuizQuestionSettings>(() => {
+    try {
+      const saved = localStorage.getItem(QUIZ_SETTINGS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...DEFAULT_QUIZ_SETTINGS,
+            ...parsed,
+            nouns: { ...DEFAULT_QUIZ_SETTINGS.nouns, ...parsed.nouns },
+            verbs: { ...DEFAULT_QUIZ_SETTINGS.verbs, ...parsed.verbs },
+            adjectives: { ...DEFAULT_QUIZ_SETTINGS.adjectives, ...parsed.adjectives },
+            others: { ...DEFAULT_QUIZ_SETTINGS.others, ...parsed.others },
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load quiz settings:', e);
+    }
+    return DEFAULT_QUIZ_SETTINGS;
+  });
 
-  // Save language to localStorage
+  // Save quizSettings to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem(LANG_STORAGE_KEY, appLanguage);
+      localStorage.setItem(QUIZ_SETTINGS_KEY, JSON.stringify(quizSettings));
     } catch (e) {
-      console.warn('Failed to save language:', e);
+      console.warn('Failed to save quiz settings:', e);
     }
-  }, [appLanguage]);
+  }, [quizSettings]);
+
+  // Ensure activeSetId is valid
+  const currentSet = vocabSets.find(s => s.id === activeSetId) || vocabSets[0] || DEFAULT_DEMO_SETS[0];
+  const vocabList = (currentSet.items || []).filter(isValidVocabItem);
 
   // Save vocabSets and activeSetId to localStorage
   useEffect(() => {
@@ -111,7 +146,7 @@ export default function App() {
         if (set.id === currentSet.id) {
           return {
             ...set,
-            items: updater(set.items || []).filter(isNounOrVerb),
+            items: updater(set.items || []).filter(isValidVocabItem),
           };
         }
         return set;
@@ -120,16 +155,29 @@ export default function App() {
   };
 
   // Update mastery for a specific item
-  const handleUpdateVocabMastery = (id: string, delta: number) => {
+  const handleUpdateVocabMastery = (
+    id: string,
+    delta: number,
+    opts?: { isNewAttempt?: boolean; correctDelta?: number; resetReviewErrors?: boolean }
+  ) => {
     updateCurrentSetItems(prev =>
       prev.map(item => {
         if (item.id === id) {
           const newScore = Math.min(100, Math.max(0, item.masteryScore + delta));
+          const isNew = opts?.isNewAttempt ?? true;
+          const corrDelta = opts?.correctDelta ?? (delta > 0 ? 1 : 0);
+          const resetErrors = opts?.resetReviewErrors ?? false;
+
+          const newAttempts = isNew ? item.attemptsCount + 1 : item.attemptsCount;
+          const newCorrect = resetErrors
+            ? newAttempts
+            : Math.max(0, item.correctCount + corrDelta);
+
           return {
             ...item,
             masteryScore: newScore,
-            attemptsCount: item.attemptsCount + 1,
-            correctCount: delta > 0 ? item.correctCount + 1 : item.correctCount,
+            attemptsCount: newAttempts,
+            correctCount: newCorrect,
             lastPracticed: new Date().toISOString(),
           };
         }
@@ -138,12 +186,12 @@ export default function App() {
     );
   };
 
-  // Add new items to active set (strictly nouns and verbs)
+  // Add new items to active set
   const handleAddVocabItems = (newItems: VocabItem[]) => {
-    const onlyNounsAndVerbs = newItems.filter(isNounOrVerb);
+    const validItems = newItems.filter(isValidVocabItem);
     updateCurrentSetItems(prev => {
-      const existingWords = new Set(prev.map(p => p.word.toLowerCase()));
-      const filteredNew = onlyNounsAndVerbs.filter(item => !existingWords.has(item.word.toLowerCase()));
+      const existingKeys = new Set(prev.map(p => getVocabItemKey(p)));
+      const filteredNew = validItems.filter(item => !existingKeys.has(getVocabItemKey(item)));
       return [...filteredNew, ...prev];
     });
   };
@@ -153,22 +201,42 @@ export default function App() {
     updateCurrentSetItems(prev => prev.filter(item => item.id !== id));
   };
 
+  // Update an existing item in active set
+  const handleUpdateVocabItem = (updatedItem: VocabItem) => {
+    updateCurrentSetItems(prev =>
+      prev.map(item => (item.id === updatedItem.id ? updatedItem : item))
+    );
+  };
+
   // Delete multiple items from active set
   const handleDeleteMultipleVocabItems = (ids: string[]) => {
     const idsSet = new Set(ids);
     updateCurrentSetItems(prev => prev.filter(item => !idsSet.has(item.id)));
   };
 
-  // Reset active set to default A1 dataset (strictly nouns and verbs)
+  // Reset mastery scores for active deck
+  const handleResetActiveDeckMastery = () => {
+    updateCurrentSetItems(prev =>
+      prev.map(item => ({
+        ...item,
+        masteryScore: 0,
+        attemptsCount: 0,
+        correctCount: 0,
+      }))
+    );
+  };
+
+  // Reset active set to default dataset
   const handleResetDefaultVocab = () => {
-    updateCurrentSetItems(() => INITIAL_A1_VOCAB.filter(isNounOrVerb));
+    updateCurrentSetItems(() => INITIAL_A1_VOCAB.filter(isValidVocabItem));
   };
 
   // Vocab Sets Management Handlers
-  const handleCreateVocabSet = (name: string) => {
+  const handleCreateVocabSet = (name: string, levelGroup: string = 'A1') => {
     const newSet: VocabSet = {
-      id: 'set_' + Date.now(),
+      id: 'set_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       name,
+      levelGroup,
       createdAt: new Date().toISOString(),
       items: [],
     };
@@ -183,42 +251,91 @@ export default function App() {
   };
 
   const handleDeleteVocabSet = (id: string) => {
-    if (vocabSets.length <= 1) return;
     const remaining = vocabSets.filter(set => set.id !== id);
-    setVocabSets(remaining);
-    if (activeSetId === id) {
-      setActiveSetId(remaining[0].id);
+    if (remaining.length === 0) {
+      const freshSet: VocabSet = {
+        id: 'set_' + Date.now(),
+        name: 'A1 Vocab Deck 1',
+        levelGroup: 'A1',
+        createdAt: new Date().toISOString(),
+        items: [],
+      };
+      setVocabSets([freshSet]);
+      setActiveSetId(freshSet.id);
+    } else {
+      setVocabSets(remaining);
+      if (activeSetId === id) {
+        setActiveSetId(remaining[0].id);
+      }
     }
   };
 
-  const handleSplitVocabSet = (id: string, chunkSize: number) => {
-    const targetSet = vocabSets.find(s => s.id === id);
-    if (!targetSet || targetSet.items.length === 0) return;
+  const handleBatchImportSets = (importedSets: VocabSet[], targetGroup?: string) => {
+    if (!Array.isArray(importedSets) || importedSets.length === 0) return;
 
-    const items = targetSet.items;
-    const chunksCount = Math.ceil(items.length / chunkSize);
-    const newCreatedSets: VocabSet[] = [];
+    const formattedSets = importedSets.map((s, idx) => {
+      let grp: string | undefined = undefined;
 
-    for (let i = 0; i < chunksCount; i++) {
-      const chunkItems = items.slice(i * chunkSize, (i + 1) * chunkSize);
-      const chunkSet: VocabSet = {
-        id: `set_split_${Date.now()}_${i + 1}`,
-        name: `${targetSet.name} - Part ${i + 1} (${chunkItems.length} words)`,
-        createdAt: new Date().toISOString(),
-        items: chunkItems,
+      // 1. If targetGroup is specified (e.g. imported inside a selected group view), force targetGroup!
+      if (targetGroup) {
+        grp = targetGroup;
+      } else {
+        // 2. Otherwise check explicit levelGroup / level / group properties
+        const explicitLevel = s.levelGroup || (s as any).level || (s as any).group;
+        if (explicitLevel) {
+          grp = explicitLevel;
+        } else {
+          // 3. Check deck name / title for level keywords
+          const u = ((s.name || (s as any).title || '').toString()).toUpperCase();
+          if (u.includes('A2')) grp = 'A2';
+          else if (u.includes('B1')) grp = 'B1';
+          else if (u.includes('B2')) grp = 'B2';
+          else if (u.includes('C1')) grp = 'C1';
+          else if (u.includes('A1')) grp = 'A1';
+        }
+      }
+
+      if (!grp) {
+        grp = 'General';
+      }
+
+      const rawItems = s.items || (s as any).words || (s as any).vocabList || [];
+
+      const itemsList = Array.isArray(rawItems)
+        ? rawItems.filter(isValidVocabItem).map((item, i) => ({
+            ...item,
+            id: item.id || `item_${Date.now()}_${idx}_${i}`,
+            masteryScore: typeof item.masteryScore === 'number' ? item.masteryScore : 0,
+          }))
+        : [];
+
+      return {
+        ...s,
+        id: s.id ? `imported_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}` : `set_${Date.now()}_${idx}`,
+        name: s.name || (s as any).title || `Imported Deck ${idx + 1}`,
+        levelGroup: grp,
+        createdAt: s.createdAt || new Date().toISOString(),
+        items: itemsList,
       };
-      newCreatedSets.push(chunkSet);
-    }
-
-    // Replace original or add chunk sets
-    setVocabSets(prev => {
-      const filtered = prev.filter(s => s.id !== id);
-      return [...filtered, ...newCreatedSets];
     });
 
-    if (newCreatedSets.length > 0) {
-      setActiveSetId(newCreatedSets[0].id);
+    setVocabSets(prev => [...formattedSets, ...prev]);
+    if (formattedSets[0]) {
+      setActiveSetId(formattedSets[0].id);
     }
+  };
+
+  const handleExportAllSets = () => {
+    const jsonStr = JSON.stringify(vocabSets, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `deutsch_meister_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const totalVocabCount = vocabList.length;
@@ -235,39 +352,46 @@ export default function App() {
         vocabList={vocabList}
         onOpenUpload={() => setActiveTab('vocab')}
         onResetDefaultVocab={handleResetDefaultVocab}
-        onOpenSettings={() => setIsSettingsOpen(true)}
+        onResetActiveDeckMastery={handleResetActiveDeckMastery}
+        onOpenSettings={() => setActiveTab('decks')}
         activeSetName={currentSet.name}
-      />
-
-      {/* Settings & Vocab Decks Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        appLanguage={appLanguage}
-        onChangeLanguage={setAppLanguage}
-        vocabSets={vocabSets}
-        activeSetId={currentSet.id}
-        onSelectVocabSet={setActiveSetId}
-        onCreateVocabSet={handleCreateVocabSet}
-        onRenameVocabSet={handleRenameVocabSet}
-        onDeleteVocabSet={handleDeleteVocabSet}
-        onSplitVocabSet={handleSplitVocabSet}
+        activeSetGroup={currentSet.levelGroup}
       />
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-        {activeTab === 'quiz' && (
+        <div className={activeTab === 'quiz' ? 'block' : 'hidden'}>
           <FlashcardQuiz
+            key={currentSet.id}
+            activeSetId={currentSet.id}
             vocabList={vocabList}
             onUpdateVocabMastery={handleUpdateVocabMastery}
+            quizSettings={quizSettings}
+          />
+        </div>
+
+        {activeTab === 'vocab' && (
+          <VocabManager
+            vocabList={vocabList}
+            onAddVocabItems={handleAddVocabItems}
+            onUpdateVocabItem={handleUpdateVocabItem}
+            onDeleteVocabItem={handleDeleteVocabItem}
+            onDeleteMultipleVocabItems={handleDeleteMultipleVocabItems}
+            onResetDefaultVocab={handleResetDefaultVocab}
           />
         )}
 
-        {activeTab === 'sentences' && (
-          <SentenceBuilder
-            vocabList={vocabList}
-            onUpdateVocabMastery={handleUpdateVocabMastery}
+        {activeTab === 'decks' && (
+          <DecksManager
+            vocabSets={vocabSets}
+            activeSetId={currentSet.id}
+            onSelectVocabSet={setActiveSetId}
+            onCreateVocabSet={handleCreateVocabSet}
+            onRenameVocabSet={handleRenameVocabSet}
+            onDeleteVocabSet={handleDeleteVocabSet}
+            onBatchImportSets={handleBatchImportSets}
+            onExportAllSets={handleExportAllSets}
           />
         )}
 
@@ -279,18 +403,11 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'vocab' && (
-          <VocabManager
-            vocabList={vocabList}
-            onAddVocabItems={handleAddVocabItems}
-            onDeleteVocabItem={handleDeleteVocabItem}
-            onDeleteMultipleVocabItems={handleDeleteMultipleVocabItems}
-            onResetDefaultVocab={handleResetDefaultVocab}
+        {activeTab === 'settings' && (
+          <SettingsManager
+            quizSettings={quizSettings}
+            onUpdateQuizSettings={setQuizSettings}
           />
-        )}
-
-        {activeTab === 'grammar' && (
-          <GrammarCheatsheet />
         )}
 
       </main>

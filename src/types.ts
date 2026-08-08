@@ -1,17 +1,19 @@
-export type VocabType = 'noun' | 'verb';
+export type VocabType = 'noun' | 'verb' | 'adjective' | 'expression' | 'Others';
 
 export type GrammaticalGender = 'der' | 'die' | 'das';
 
 export type GrammaticalCase = 'Akkusativ' | 'Dativ' | 'Genitiv' | 'Wechsel';
 
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+
 export interface VocabItem {
   id: string;
-  word: string; // e.g. "Tisch" or "sehen"
+  word: string; // e.g. "Tisch", "sehen", or "groß"
   type: VocabType;
-  translationAr: string;
   translationEn?: string;
-  level: 'A1' | 'A2' | 'B1';
-  category: string; // e.g. "Alltag", "Wohnung", "Verben", "Grammatik"
+  translationAr?: string;
+  level?: CefrLevel;
+  category?: string; // Optional legacy field
   
   // Nouns
   gender?: GrammaticalGender;
@@ -24,12 +26,14 @@ export interface VocabItem {
   perfekt?: string; // e.g. "hat gesehen"
   
   // Adjectives
-  antonym?: string; // e.g. "klein" for "groß"
+  antonym?: string; // e.g. "klein" for "groß" (Gegenteil)
   
-  // Prepositions
-  case?: GrammaticalCase; // e.g. "Dativ" or "Akkusativ"
-  
-  // Examples
+  // Prepositions & Fixed Prepositions with Case (e.g. sich kümmern + um + Akkusativ)
+  case?: GrammaticalCase; // e.g. "Dativ" or "Akkusativ" (for prepositions)
+  preposition?: string; // e.g. "um", "auf", "mit", "an", "bei" (fixed verb/expression preposition)
+  prepositionCase?: GrammaticalCase; // e.g. "Akkusativ", "Dativ", "Genitiv", "Wechsel"
+
+  // Examples (optional/legacy)
   exampleDe?: string;
   exampleAr?: string;
   
@@ -41,7 +45,7 @@ export interface VocabItem {
 }
 
 export interface EvaluationCorrection {
-  field: 'gender' | 'plural' | 'meaning' | 'conjugation' | 'antonym' | 'case' | 'sentence';
+  field: 'gender' | 'plural' | 'meaning' | 'conjugation' | 'antonym' | 'case' | 'sentence' | 'preposition' | 'prepositionCase';
   fieldNameAr: string;
   expected: string;
   provided: string;
@@ -87,15 +91,86 @@ export interface SentenceEvaluationResult {
   masteryDelta: number;
 }
 
-export type ActiveTab = 'quiz' | 'sentences' | 'stats' | 'vocab' | 'grammar';
+export type ActiveTab = 'quiz' | 'vocab' | 'stats' | 'decks' | 'settings';
+
+export interface QuizQuestionSettings {
+  nouns: {
+    translation: boolean;
+    article: boolean;
+    plural: boolean;
+  };
+  verbs: {
+    translation: boolean;
+    present3rd: boolean;
+    praeteritum: boolean;
+    perfekt: boolean;
+    prepositionCase?: boolean;
+    antonym?: boolean;
+  };
+  adjectives: {
+    antonym: boolean;
+    translation: boolean;
+  };
+  expressions: {
+    translation: boolean;
+    prepositionCase?: boolean;
+  };
+  others: {
+    translation: boolean;
+  };
+}
+
+export const DEFAULT_QUIZ_SETTINGS: QuizQuestionSettings = {
+  nouns: {
+    translation: true,
+    article: true,
+    plural: true,
+  },
+  verbs: {
+    translation: true,
+    present3rd: true,
+    praeteritum: true,
+    perfekt: true,
+    prepositionCase: true,
+  },
+  adjectives: {
+    antonym: true,
+    translation: true,
+  },
+  expressions: {
+    translation: true,
+    prepositionCase: true,
+  },
+  others: {
+    translation: true,
+  },
+};
 
 export type AppLanguage = 'ar' | 'en' | 'de' | 'es';
 
 export interface VocabSet {
   id: string;
   name: string;
+  levelGroup?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'General' | string;
   description?: string;
   createdAt: string;
   items: VocabItem[];
+}
+
+export function getVocabItemKey(item: {
+  word: string;
+  preposition?: string;
+  prepositionCase?: string;
+  case?: string;
+  translationAr?: string;
+  translationEn?: string;
+  type?: string;
+}): string {
+  const word = (item.word || '').trim().toLowerCase();
+  const prep = (item.preposition || '').trim().toLowerCase();
+  const prepCase = (item.prepositionCase || item.case || '').trim().toLowerCase();
+  const trans = (item.translationAr || item.translationEn || '').trim().toLowerCase();
+  const type = (item.type || '').trim().toLowerCase();
+  return `${word}|${prep}|${prepCase}|${trans}|${type}`;
 }
 

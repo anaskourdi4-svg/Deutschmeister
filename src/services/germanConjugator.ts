@@ -8,7 +8,16 @@ export interface VerbConjugation {
 
 // Comprehensive Dictionary for Irregular & Common German Verbs (A1/A2/B1)
 const GERMAN_VERB_DICTIONARY: Record<string, VerbConjugation> = {
-  // A1 Core Verbs
+  // A1/A2/B1 Core Verbs
+  'bieten': { present3rd: 'bietet', praeteritum: 'bot', perfekt: 'hat geboten' },
+  'verbieten': { present3rd: 'verbietet', praeteritum: 'verbot', perfekt: 'hat verboten' },
+  'anbieten': { present3rd: 'bietet an', praeteritum: 'bot an', perfekt: 'hat angeboten' },
+  'verbinden': { present3rd: 'verbindet', praeteritum: 'verband', perfekt: 'hat verbunden' },
+  'versprechen': { present3rd: 'verspricht', praeteritum: 'versprach', perfekt: 'hat versprochen' },
+  'empfehlen': { present3rd: 'empfiehlt', praeteritum: 'empfahl', perfekt: 'hat empfohlen' },
+  'entscheiden': { present3rd: 'entscheidet', praeteritum: 'entschied', perfekt: 'hat entschieden' },
+  'beschreiben': { present3rd: 'beschreibt', praeteritum: 'beschrieb', perfekt: 'hat beschrieben' },
+  'vergleichen': { present3rd: 'vergleicht', praeteritum: 'verglich', perfekt: 'hat verglichen' },
   'sehen': { present3rd: 'sieht', praeteritum: 'sah', perfekt: 'hat gesehen' },
   'fahren': { present3rd: 'fährt', praeteritum: 'fuhr', perfekt: 'ist gefahren' },
   'sprechen': { present3rd: 'spricht', praeteritum: 'sprach', perfekt: 'hat gesprochen' },
@@ -59,7 +68,6 @@ const GERMAN_VERB_DICTIONARY: Record<string, VerbConjugation> = {
   'waschen': { present3rd: 'wäscht', praeteritum: 'wusch', perfekt: 'hat gewaschen' },
   'schlagen': { present3rd: 'schlägt', praeteritum: 'schlug', perfekt: 'hat geschlagen' },
   'finden': { present3rd: 'findet', praeteritum: 'fand', perfekt: 'hat gefunden' },
-  'bieten': { present3rd: 'bietet', praeteritum: 'bot', perfekt: 'hat geboten' },
   'bitten': { present3rd: 'bittet', praeteritum: 'bat', perfekt: 'hat gebeten' },
   'schneiden': { present3rd: 'schneidet', praeteritum: 'schnitt', perfekt: 'hat geschnitten' },
   'ziehen': { present3rd: 'zieht', praeteritum: 'zog', perfekt: 'hat gezogen' },
@@ -101,6 +109,7 @@ const GERMAN_VERB_DICTIONARY: Record<string, VerbConjugation> = {
   'lachen': { present3rd: 'lacht', praeteritum: 'lachte', perfekt: 'hat gelacht' },
   'weinen': { present3rd: 'weint', praeteritum: 'weinte', perfekt: 'hat geweint' },
   'hören': { present3rd: 'hört', praeteritum: 'hörte', perfekt: 'hat gehört' },
+  'holen': { present3rd: 'holt', praeteritum: 'holte', perfekt: 'hat geholt' },
 };
 
 /**
@@ -109,10 +118,10 @@ const GERMAN_VERB_DICTIONARY: Record<string, VerbConjugation> = {
  */
 export function sanitizeConjugationWord(str?: string): string {
   if (!str) return '';
-  let s = str.trim();
+  let s = String(str).trim();
 
-  // Strip labels like "Partizip II:", "Partizip 2:", "Präteritum:", "Präsens:", "Perfekt:"
-  s = s.replace(/^(Partizip\s*(II|2)?|Präteritum|Präsens|Perfekt|V3|V2|V1|Partizip)\s*:\s*/gi, '');
+  // Strip labels like "Partizip II:", "Präteritum:", "Perfekt:", "present3rd:", "interal", etc.
+  s = s.replace(/\b(Partizip(\s*(II|2))?|Präteritum|Präsens|Perfekt|Perf|Present3rd|Präsens3|V1|V2|V3|interal|internal|praeteritum)\b/gi, '');
 
   // Strip parenthetical text e.g. "gefangen (Partizip II: gefa, fangte...)"
   if (s.includes('(')) {
@@ -127,11 +136,17 @@ export function sanitizeConjugationWord(str?: string): string {
   // Remove German personal pronouns
   s = s.replace(/\b(er|sie|es|er\/sie\/es|er,sie,es)\b/gi, '').trim();
 
-  // Strip non-word prefix/suffix except German umlauts
-  s = s.replace(/^[^\wäöüß\s]+|[^\wäöüß\s]+$/gi, '').trim();
+  // Clean trailing / leading punctuation or stray commas/colons/dots
+  s = s.replace(/^[^\wäöüß\s]+|[^\wäöüß\s]+$/gi, '').replace(/[\:\,\.]/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // If still suspiciously long or contains sentence punctuation, discard
-  if (s.length > 35 || s.includes('.')) {
+  // If multiple words were crammed into one field (e.g. "holt holte hat geholt"), extract just the single conjugation token
+  const wordTokens = s.split(/\s+/).filter(Boolean);
+  if (wordTokens.length > 2 && !/^(hat|ist)$/i.test(wordTokens[0])) {
+    s = wordTokens[0];
+  }
+
+  // If still suspiciously long, discard
+  if (s.length > 35) {
     return '';
   }
 
@@ -141,17 +156,25 @@ export function sanitizeConjugationWord(str?: string): string {
 /**
  * Get accurate dictionary conjugation or generate fallback regular conjugations
  */
-export function getVerbConjugations(item: VocabItem): VerbConjugation {
-  const wordLower = item.word.trim().toLowerCase();
+export function getVerbConjugations(itemInput: VocabItem | Partial<VocabItem> | string): VerbConjugation {
+  const item: Partial<VocabItem> = typeof itemInput === 'string' ? { word: itemInput } : itemInput;
+  if (item.present3rd || item.praeteritum || item.perfekt) {
+    return {
+      present3rd: item.present3rd || '',
+      praeteritum: item.praeteritum || '',
+      perfekt: item.perfekt || '',
+    };
+  }
+  const wordLower = (item.word || '').trim().toLowerCase();
 
   // 1. Direct dictionary match (Authority source)
   if (GERMAN_VERB_DICTIONARY[wordLower]) {
     return GERMAN_VERB_DICTIONARY[wordLower];
   }
 
-  // 2. Check compound verb with separable prefix (e.g. abfangen -> base verb fangen with prefix ab)
-  const prefixes = ['an', 'auf', 'aus', 'ein', 'mit', 'ab', 'zu', 'vor', 'nach', 'bei', 'weg', 'weiter', 'zurück', 'her', 'hin'];
-  for (const prefix of prefixes) {
+  // 2. Check compound verb with separable or inseparable prefix (e.g. abfangen -> base verb fangen, verbieten -> base verb bieten)
+  const separablePrefixes = ['an', 'auf', 'aus', 'ein', 'mit', 'ab', 'zu', 'vor', 'nach', 'bei', 'weg', 'weiter', 'zurück', 'her', 'hin'];
+  for (const prefix of separablePrefixes) {
     if (wordLower.startsWith(prefix) && wordLower.length > prefix.length + 2) {
       const base = wordLower.slice(prefix.length);
       if (GERMAN_VERB_DICTIONARY[base]) {
@@ -161,6 +184,26 @@ export function getVerbConjugations(item: VocabItem): VerbConjugation {
         let perf = baseDict.perfekt;
         if (perf.includes(' ge')) {
           perf = perf.replace(' ge', ` ${prefix}ge`);
+        } else if (perf.startsWith('hat ') || perf.startsWith('ist ')) {
+          const parts = perf.split(' ');
+          perf = `${parts[0]} ${prefix}${parts[1]}`;
+        }
+        return { present3rd: pres3, praeteritum: praet, perfekt: perf };
+      }
+    }
+  }
+
+  const inseparablePrefixes = ['ver', 'be', 'emp', 'ent', 'er', 'ge', 'miss', 'zer'];
+  for (const prefix of inseparablePrefixes) {
+    if (wordLower.startsWith(prefix) && wordLower.length > prefix.length + 2) {
+      const base = wordLower.slice(prefix.length);
+      if (GERMAN_VERB_DICTIONARY[base]) {
+        const baseDict = GERMAN_VERB_DICTIONARY[base];
+        const pres3 = `${prefix}${baseDict.present3rd}`;
+        const praet = `${prefix}${baseDict.praeteritum}`;
+        let perf = baseDict.perfekt;
+        if (perf.includes(' ge')) {
+          perf = perf.replace(' ge', ` ${prefix}`);
         } else if (perf.startsWith('hat ') || perf.startsWith('ist ')) {
           const parts = perf.split(' ');
           perf = `${parts[0]} ${prefix}${parts[1]}`;
@@ -195,12 +238,16 @@ export function getVerbConjugations(item: VocabItem): VerbConjugation {
   const presSuffix = needsExtraE ? 'et' : 't';
   const praetSuffix = needsExtraE ? 'ete' : 'te';
 
-  const isMovement = /^(reisen|wandern|joggen|klettern|segeln|rudern|tauchen|springen|fallen|fliehen|landen|passieren|fahren|gehen|kommen|fliegen|rennen)$/.test(wordLower);
+  const isMovement = /^(reisen|wandern|joggen|klettern|segeln|rudern|tauchen|springen|fallen|fliehen|landen|passieren|fahren|gehen|kommen|fliegen|rennen|schwimmen)$/.test(wordLower);
   const aux = isMovement ? 'ist' : 'hat';
+
+  const isInseparable = /^(be|emp|ent|er|ge|miss|ver|zer)/.test(wordLower);
+  const isIeren = wordLower.endsWith('ieren');
+  const gePart = (isInseparable || isIeren) ? '' : 'ge';
 
   const present3rd = cleanItemP3 || `${stem}${presSuffix}`;
   const praeteritum = cleanItemPr || `${stem}${praetSuffix}`;
-  const perfekt = cleanItemPe || `${aux} ge${stem}t`;
+  const perfekt = cleanItemPe || `${aux} ${gePart}${stem}t`;
 
   return { present3rd, praeteritum, perfekt };
 }
@@ -322,6 +369,68 @@ export function evaluateGermanAnswer(userInput: string, targetValue: string, isP
   return false;
 }
 
+const IRREGULAR_VERB_BASE_SET = new Set([
+  'sehen', 'fahren', 'sprechen', 'essen', 'trinken', 'gehen', 'kommen',
+  'schlafen', 'bleiben', 'lesen', 'schreiben', 'laufen', 'schwimmen',
+  'fliegen', 'helfen', 'treffen', 'nehmen', 'geben', 'bringen', 'denken',
+  'wissen', 'haben', 'sein', 'werden', 'stehen', 'sitzen', 'liegen',
+  'schließen', 'kennen', 'nennen', 'rennen', 'verstehen', 'vergessen',
+  'verlieren', 'gewinnen', 'bekommen', 'beginnen', 'gefallen', 'einladen',
+  'fangen', 'anfangen', 'halten', 'lassen', 'verlassen', 'fallen', 'tragen',
+  'waschen', 'schlagen', 'finden', 'bieten', 'bitten', 'schneiden', 'ziehen',
+  'aufstehen', 'mitkommen', 'anrufen', 'fernsehen', 'anziehen', 'ausziehen',
+  'können', 'müssen', 'wollen', 'sollen', 'dürfen', 'mögen', 'singen'
+]);
+
+/**
+ * Accurately determines if a German verb is irregular / strong / modal.
+ */
+export function checkIsIrregularVerb(item: Partial<VocabItem> | string): boolean {
+  if (typeof item === 'string') {
+    const w = item.trim().toLowerCase();
+    if (IRREGULAR_VERB_BASE_SET.has(w)) return true;
+    const prefixes = ['an', 'auf', 'aus', 'ein', 'mit', 'ab', 'zu', 'vor', 'nach', 'bei', 'weg', 'weiter', 'zurück', 'her', 'hin', 'ver', 'be', 'ge', 'er', 'ent', 'zer'];
+    for (const prefix of prefixes) {
+      if (w.startsWith(prefix) && w.length > prefix.length + 2) {
+        if (IRREGULAR_VERB_BASE_SET.has(w.slice(prefix.length))) return true;
+      }
+    }
+    return false;
+  }
+
+  if (item.isIrregular === true) return true;
+  if (!item.word) return false;
+
+  const w = item.word.trim().toLowerCase();
+  if (IRREGULAR_VERB_BASE_SET.has(w)) return true;
+
+  const prefixes = ['an', 'auf', 'aus', 'ein', 'mit', 'ab', 'zu', 'vor', 'nach', 'bei', 'weg', 'weiter', 'zurück', 'her', 'hin', 'ver', 'be', 'ge', 'er', 'ent', 'zer'];
+  for (const prefix of prefixes) {
+    if (w.startsWith(prefix) && w.length > prefix.length + 2) {
+      if (IRREGULAR_VERB_BASE_SET.has(w.slice(prefix.length))) return true;
+    }
+  }
+
+  // Check conjugations if available
+  const p3 = item.present3rd ? item.present3rd.toLowerCase() : '';
+  const pr = item.praeteritum ? item.praeteritum.toLowerCase() : '';
+  const pe = item.perfekt ? item.perfekt.toLowerCase() : '';
+
+  if (/[äöü]|ie\b|immt|ibt|itst|isst/i.test(p3) && !w.includes('ä') && !w.includes('ö') && !w.includes('ü')) {
+    return true;
+  }
+
+  if (pr && !/(te|tete)\b/i.test(pr.replace(/\b(er|sie|es)\b/gi, '').trim())) {
+    return true;
+  }
+
+  if (pe && /en\b/i.test(pe)) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Generates clear educational explanation for German verb conjugation rules and rationale
  */
@@ -338,7 +447,7 @@ export function getVerbExplanationText(
   const isModal = /^(können|müssen|wollen|sollen|dürfen|mögen)$/i.test(w);
   const isSeparable = /\s+/.test(p3) || /^(an|auf|aus|ein|mit|ab|zu|vor|nach|bei|weg|weiter)/i.test(w);
   const isAuxIst = /\bist\b/i.test(pe);
-  const isIrregular = Boolean(isIrregularFlag || isModal || GERMAN_VERB_DICTIONARY[w] !== undefined);
+  const isIrregular = isIrregularFlag === true || checkIsIrregularVerb({ word, present3rd: p3, praeteritum: pr, perfekt: pe });
 
   const explanationParts: string[] = [];
 

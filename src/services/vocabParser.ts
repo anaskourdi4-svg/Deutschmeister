@@ -1,4 +1,158 @@
-import { VocabItem, VocabType, GrammaticalGender, GrammaticalCase } from '../types';
+import { VocabItem, VocabType, GrammaticalGender, GrammaticalCase, CefrLevel } from '../types';
+import { getVerbConjugations } from './germanConjugator';
+import * as XLSX from 'xlsx';
+
+export function parseExcelBuffer(buffer: ArrayBuffer): { items: VocabItem[]; plainText: string } {
+  try {
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) return { items: [], plainText: '' };
+
+    const worksheet = workbook.Sheets[firstSheetName];
+    const rawRows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' });
+    const rows: string[][] = rawRows.map(row => (Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : []));
+
+    const plainText = XLSX.utils.sheet_to_csv(worksheet);
+
+    const items = parseGoogleSheetRows(rows);
+    return { items, plainText };
+  } catch (e) {
+    console.error('Error reading Excel spreadsheet buffer:', e);
+    return { items: [], plainText: '' };
+  }
+}
+
+export function detectDelimiter(csvContent: string): string {
+  if (!csvContent) return ',';
+
+  const lines = csvContent
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0)
+    .slice(0, 15);
+
+  if (lines.length === 0) return ',';
+
+  const candidates = ['\t', ';', ',', '|', '::', ':'];
+  let bestDelim = ',';
+  let maxCount = 0;
+
+  for (const delim of candidates) {
+    let count = 0;
+    for (const line of lines) {
+      let inside = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') inside = !inside;
+        else if (line[i] === delim && !inside) count++;
+      }
+    }
+    if (count > maxCount) {
+      maxCount = count;
+      bestDelim = delim;
+    }
+  }
+
+  if (maxCount === 0) {
+    if (lines.some(l => l.includes('\t'))) return '\t';
+    if (lines.some(l => / {2,}/.test(l))) return 'MULTI_SPACE';
+  }
+
+  return bestDelim;
+}
+
+export function parseCSVLine(line: string, customDelimiter?: string): string[] {
+  let trimmed = line.trim();
+  if (!trimmed) return [];
+
+  if (customDelimiter === 'MULTI_SPACE') {
+    return trimmed.split(/ {2,}/).map(s => s.trim().replace(/^"(.*)"$/, '$1'));
+  }
+
+  // If the entire line is wrapped in outer quotes
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    const unquoted = trimmed.slice(1, -1);
+    if ((unquoted.includes(',') || unquoted.includes('\t') || unquoted.includes(';') || unquoted.includes('|')) && !unquoted.includes('","')) {
+      trimmed = unquoted;
+    }
+  }
+
+  let delimiter = customDelimiter || ',';
+  if (!customDelimiter) {
+    if (trimmed.includes('\t')) delimiter = '\t';
+    else if (trimmed.includes(';') && !trimmed.includes(',')) delimiter = ';';
+    else if (trimmed.includes('|') && !trimmed.includes(',')) delimiter = '|';
+  }
+
+  const cells: string[] = [];
+  let insideQuotes = false;
+  let currentCell = '';
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (char === '"') {
+      if (insideQuotes && trimmed[i + 1] === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === delimiter && !insideQuotes) {
+      cells.push(currentCell.trim().replace(/^"(.*)"$/, '$1'));
+      currentCell = '';
+    } else {
+      currentCell += char;
+    }
+  }
+  cells.push(currentCell.trim().replace(/^"(.*)"$/, '$1'));
+  return cells;
+}
+
+export function parseCSVToRows(csvContent: string): string[][] {
+  if (!csvContent) return [];
+  const content = csvContent.replace(/^\uFEFF/, '');
+  const detectedDelim = detectDelimiter(content);
+
+  const rawLines = content.split(/\r?\n/);
+  const combinedLines: string[] = [];
+  let currentLine = '';
+  let inQuotes = false;
+
+  for (const line of rawLines) {
+    if (!currentLine) {
+      currentLine = line;
+    } else {
+      currentLine += '\n' + line;
+    }
+
+    let quoteCount = 0;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') quoteCount++;
+    }
+
+    if (quoteCount % 2 !== 0) {
+      inQuotes = !inQuotes;
+    }
+
+    if (!inQuotes) {
+      if (currentLine.trim()) {
+        combinedLines.push(currentLine);
+      }
+      currentLine = '';
+    }
+  }
+  if (currentLine.trim()) {
+    combinedLines.push(currentLine);
+  }
+
+  return combinedLines.map(l => parseCSVLine(l, detectedDelim));
+}
+
+export function parseCSVContent(csvContent: string): VocabItem[] {
+  if (!csvContent) return [];
+  const rows = parseCSVToRows(csvContent);
+  if (rows.length === 0) return [];
+  return parseGoogleSheetRows(rows);
+}
 
 export function parseVocabFile(fileContent: string, fileName: string): VocabItem[] {
   const extension = fileName.split('.').pop()?.toLowerCase();
@@ -11,6 +165,21 @@ export function parseVocabFile(fileContent: string, fileName: string): VocabItem
       }
     } catch (e) {
       console.warn('JSON parsing failed, falling back to line parser:', e);
+    }
+  }
+
+  // Check if CSV format (file extension OR headers containing comma/tab OR matching table columns)
+  const trimmed = fileContent.trim();
+  const firstLine = trimmed.split(/\r?\n/)[0] || '';
+  const isCSV = extension === 'csv' ||
+    firstLine.includes(',') ||
+    firstLine.includes('\t') ||
+    /^(type|article|the word|word|german|kategorie|geschlecht|wort|nomen|verb|adjective)/i.test(firstLine);
+
+  if (isCSV) {
+    const csvParsed = parseCSVContent(fileContent);
+    if (csvParsed.length > 0) {
+      return csvParsed;
     }
   }
 
@@ -61,6 +230,8 @@ function normalizeParsedItem(raw: any, index: number): VocabItem {
     perfekt: raw.perfekt,
     antonym: raw.antonym || raw.opposite,
     case: (['Akkusativ', 'Dativ', 'Genitiv', 'Wechsel'].includes(raw.case) ? raw.case : undefined) as GrammaticalCase | undefined,
+    preposition: raw.preposition || raw.verbPreposition,
+    prepositionCase: (['Akkusativ', 'Dativ', 'Genitiv', 'Wechsel'].includes(raw.prepositionCase) ? raw.prepositionCase : undefined) as GrammaticalCase | undefined,
     exampleDe: raw.exampleDe || raw.example,
     exampleAr: raw.exampleAr,
     masteryScore: Number(raw.masteryScore) || 0,
@@ -72,8 +243,54 @@ function normalizeParsedItem(raw: any, index: number): VocabItem {
 function determineType(explicitType?: string, word: string = '', gender?: GrammaticalGender): VocabType {
   if (explicitType) {
     const lower = explicitType.toLowerCase().trim();
-    if (lower.includes('verb') || lower.includes('فعل')) return 'verb';
-    return 'noun';
+    if (
+      lower.includes('adverb') ||
+      lower.includes('ظرف') ||
+      lower === 'adv' ||
+      lower === 'adv.'
+    ) return 'Others';
+
+    if (
+      lower.includes('noun') ||
+      lower.includes('اسم') ||
+      lower.includes('nomen') ||
+      lower.includes('substantiv') ||
+      lower === 'n' ||
+      lower === 'n.'
+    ) return 'noun';
+
+    if (
+      lower.includes('adj') ||
+      lower.includes('صفة') ||
+      lower === 'a' ||
+      lower === 'a.'
+    ) return 'adjective';
+
+    if (
+      lower === 'verb' ||
+      lower === 'v' ||
+      lower === 'v.' ||
+      lower.includes('فعل') ||
+      lower.includes('شاذ') ||
+      (lower.includes('verb') && !lower.includes('adverb'))
+    ) return 'verb';
+
+    if (
+      lower.includes('expression') ||
+      lower.includes('phrase') ||
+      lower.includes('redewendung') ||
+      lower.includes('تعبير') ||
+      lower.includes('عبارة') ||
+      lower.includes('جملة')
+    ) return 'expression';
+
+    if (
+      lower.includes('other') ||
+      lower.includes('sonstiges') ||
+      lower.includes('prep') ||
+      lower.includes('حرف') ||
+      lower.includes('آخر')
+    ) return 'Others';
   }
 
   if (gender) return 'noun';
@@ -91,7 +308,8 @@ function determineType(explicitType?: string, word: string = '', gender?: Gramma
     return 'verb';
   }
 
-  return 'noun';
+  // Lowercase non-verbs are typically adjectives in German A1-C2 lists
+  return 'adjective';
 }
 
 export function inferGender(word: string): GrammaticalGender {
@@ -333,20 +551,105 @@ export function exportVocabToJson(items: VocabItem[]): string {
   return JSON.stringify(items, null, 2);
 }
 
+export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
+  const headers = [
+    'Type',
+    'Article',
+    'Word',
+    'Plural',
+    'regular/irregular',
+    'Conjugation',
+    'Preposition',
+    'Case',
+    'Antonym',
+    'EN_translation',
+    'Example',
+    'CEFR level'
+  ];
+
+  const getTypeRank = (item: VocabItem) => {
+    if (item.type === 'noun') return 1;
+    if (item.type === 'verb') return 2;
+    if (item.type === 'adjective') return 3;
+    return 4;
+  };
+
+  const sortedItems = [...items].sort((a, b) => {
+    const rankA = getTypeRank(a);
+    const rankB = getTypeRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    return (a.word || '').localeCompare(b.word || '', 'de');
+  });
+
+  const rows = sortedItems.map(item => {
+    const isIrregularVerb = item.type === 'verb' && item.isIrregular;
+    const typeStr = item.type === 'noun'
+      ? 'Noun'
+      : item.type === 'verb'
+      ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
+      : item.type === 'adjective'
+      ? 'Adjective'
+      : 'Others';
+
+    const articleStr = item.type === 'noun' ? (item.gender || '') : '';
+    const wordStr = item.word || '';
+    const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
+    const regIrregStr = item.isIrregular ? 'irregular' : (item.type === 'verb' ? 'regular' : '');
+
+    let conjugationStr = '';
+    if (item.type === 'verb') {
+      const parts = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
+      if (parts.length > 0) {
+        conjugationStr = parts.join(', ');
+      }
+    }
+
+    const antonymStr = item.type === 'adjective' ? (item.antonym || '') : '';
+    const prepositionStr = item.preposition || '';
+    const prepositionCaseStr = item.prepositionCase || '';
+    const translationEnStr = item.translationEn || item.translationAr || '';
+    const exampleStr = item.exampleDe || '';
+    const levelStr = item.level || 'A1';
+
+    return [
+      typeStr,
+      articleStr,
+      wordStr,
+      pluralStr,
+      regIrregStr,
+      conjugationStr,
+      prepositionStr,
+      prepositionCaseStr,
+      antonymStr,
+      translationEnStr,
+      exampleStr,
+      levelStr
+    ];
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Vocabulary');
+  const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  return new Uint8Array(excelBuffer);
+}
+
 export function exportVocabToCSV(items: VocabItem[]): string {
-  // Add UTF-8 BOM for Microsoft Excel and Google Sheets Arabic encoding compatibility
+  // Add UTF-8 BOM (\uFEFF) for Microsoft Excel and Google Sheets encoding compatibility
   const BOM = '\uFEFF';
   const headers = [
-    'الكلمة (Word)',
-    'الأداة (Gender/Article)',
-    'الجمع (Plural)',
-    'النوع (Type)',
-    'الترجمة العربية (Translation)',
-    'التصنيف (Category)',
-    'نسبة الإتقان (Mastery %)',
-    'تصريف الفعل / العكس (Conjugation/Antonym)',
-    'جملة نموذجية (Example DE)',
-    'ترجمة الجملة (Example AR)'
+    'Type',
+    'Article',
+    'Word',
+    'Plural',
+    'regular/irregular',
+    'Conjugation',
+    'Preposition',
+    'Case',
+    'Antonym',
+    'EN_translation',
+    'Example',
+    'CEFR level'
   ];
 
   const escapeField = (val?: string | number) => {
@@ -355,28 +658,435 @@ export function exportVocabToCSV(items: VocabItem[]): string {
     return `"${str}"`;
   };
 
-  const rows = items.map(item => {
-    let extraDetails = '';
+  const getTypeRank = (item: VocabItem) => {
+    if (item.type === 'noun') return 1;
+    if (item.type === 'verb') return 2;
+    if (item.type === 'adjective') return 3;
+    return 4;
+  };
+
+  const sortedItems = [...items].sort((a, b) => {
+    const rankA = getTypeRank(a);
+    const rankB = getTypeRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    return (a.word || '').localeCompare(b.word || '', 'de');
+  });
+
+  const rows = sortedItems.map(item => {
+    const isIrregularVerb = item.type === 'verb' && item.isIrregular;
+    const typeStr = item.type === 'noun'
+      ? 'Noun'
+      : item.type === 'verb'
+      ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
+      : item.type === 'adjective'
+      ? 'Adjective'
+      : 'Others';
+
+    const articleStr = item.type === 'noun' ? (item.gender || '') : '';
+    const wordStr = item.word || '';
+    const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
+    const regIrregStr = item.isIrregular ? 'irregular' : (item.type === 'verb' ? 'regular' : '');
+
+    let conjugationStr = '';
     if (item.type === 'verb') {
-      const conjugations = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
-      if (conjugations.length > 0) extraDetails = conjugations.join(', ');
-    } else if (item.antonym) {
-      extraDetails = `العكس: ${item.antonym}`;
+      const parts = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
+      if (parts.length > 0) {
+        conjugationStr = parts.join(', ');
+      }
     }
 
+    const antonymStr = item.type === 'adjective' ? (item.antonym || '') : '';
+    const prepositionStr = item.preposition || '';
+    const prepositionCaseStr = item.prepositionCase || '';
+    const translationEnStr = item.translationEn || item.translationAr || '';
+    const exampleStr = item.exampleDe || '';
+    const levelStr = item.level || 'A1';
+
     return [
-      escapeField(item.word),
-      escapeField(item.gender || ''),
-      escapeField(item.plural || ''),
-      escapeField(item.type === 'noun' ? 'اسم' : item.type === 'verb' ? 'فعل' : item.type || ''),
-      escapeField(item.translationAr),
-      escapeField(item.category || 'عام'),
-      escapeField(`${item.masteryScore}%`),
-      escapeField(extraDetails),
-      escapeField(item.exampleDe || ''),
-      escapeField(item.exampleAr || '')
+      escapeField(typeStr),
+      escapeField(articleStr),
+      escapeField(wordStr),
+      escapeField(pluralStr),
+      escapeField(regIrregStr),
+      escapeField(conjugationStr),
+      escapeField(prepositionStr),
+      escapeField(prepositionCaseStr),
+      escapeField(antonymStr),
+      escapeField(translationEnStr),
+      escapeField(exampleStr),
+      escapeField(levelStr)
     ].join(',');
   });
 
   return BOM + [headers.join(','), ...rows].join('\n');
 }
+
+export function parseRowContentHeuristic(row: string[], rowIdx: number = 0): VocabItem | null {
+  if (!row || row.length === 0) return null;
+
+  const cleanCells = row.map(c => (c || '').toString().trim()).filter(Boolean);
+  if (cleanCells.length === 0) return null;
+
+  const joined = cleanCells.join(' ').toLowerCase();
+  if (
+    (joined.includes('type') && joined.includes('word')) ||
+    (joined.includes('نوع') && joined.includes('كلمة')) ||
+    joined.includes('regular/irregular') ||
+    joined === 'type article word plural conjugation antonym translation example level'
+  ) {
+    return null;
+  }
+
+  let rawWord = '';
+  let rawArticle = '';
+  let rawType = '';
+  let rawPlural = '';
+  let rawConjugation = '';
+  let rawAntonym = '';
+  let translationAr = '';
+  let translationEn = '';
+  let exampleDe = '';
+  let level: CefrLevel | undefined = undefined;
+
+  const unclassified: string[] = [];
+
+  for (const cell of cleanCells) {
+
+    // 1. CEFR Level
+    if (/^(a1|a2|b1|b2|c1|c2)$/i.test(cell)) {
+      level = cell.toUpperCase() as CefrLevel;
+      continue;
+    }
+
+    // 2. Article / Gender
+    if (!rawArticle && /^(der|die|das)$/i.test(cell)) {
+      rawArticle = cell.toLowerCase();
+      continue;
+    }
+    if (!rawArticle && /^(m|f|n|männlich|weiblich|sachlich|مذكر|مؤنث|محايد)$/i.test(cell)) {
+      if (/^(m|männlich|مذكر)$/i.test(cell)) rawArticle = 'der';
+      else if (/^(f|weiblich|مؤنث)$/i.test(cell)) rawArticle = 'die';
+      else if (/^(n|sachlich|محايد)$/i.test(cell)) rawArticle = 'das';
+      continue;
+    }
+
+    // 3. Explicit Type
+    if (!rawType && /^(noun|verb|adjective|adj|adverb|adv|adv\.|others|other|nomen|substantiv|فعل|أفعال|صفة|صفات|ظرف|اسم|أسماء|حرف|verb\s*\(.*?\)|irregular\s*verb|verben|فعل\s*شاذ|v|v\.|n|n\.|a|a\.|sonstiges)$/i.test(cell)) {
+      rawType = cell;
+      continue;
+    }
+
+    // 4. Arabic Translation
+    if (!translationAr && /[\u0600-\u06FF]/.test(cell)) {
+      translationAr = cell;
+      continue;
+    }
+
+    // 5. Verb Conjugation or regular/irregular
+    if (!rawConjugation && (cell.includes(',') || /^(regular|irregular|شاذ|عادي)$/i.test(cell)) && /(hat|ist|ge[a-z]+|te\b|[a-z]+t\b|regular|irregular|شاذ)/i.test(cell)) {
+      rawConjugation = cell;
+      continue;
+    }
+
+    // 6. Plural form
+    if (!rawPlural && (/^die\s+[A-ZÄÖÜa-zäöüß]+/i.test(cell) || /^(\-|\+)?(e|en|n|er|s|¨e|¨er)\b/i.test(cell))) {
+      rawPlural = cell;
+      continue;
+    }
+
+    // 7. Example Sentence
+    if (!exampleDe && (/[.?!]$/.test(cell) || (cell.split(/\s+/).length >= 3 && /[A-ZÄÖÜa-zäöüß]/.test(cell)))) {
+      exampleDe = cell;
+      continue;
+    }
+
+    unclassified.push(cell);
+  }
+
+  for (const cell of unclassified) {
+    if (!rawWord) {
+      const artMatch = cell.match(/^(der|die|das)\s+(.+)$/i);
+      if (artMatch) {
+        if (!rawArticle) rawArticle = artMatch[1].toLowerCase();
+        rawWord = artMatch[2].trim();
+        continue;
+      }
+      if (/[A-ZÄÖÜa-zäöüß]/.test(cell)) {
+        rawWord = cell;
+        continue;
+      }
+    }
+
+    if (rawWord && !translationEn) {
+      if (/^(≠|!=|opposite:)/i.test(cell)) {
+        rawAntonym = cell.replace(/^(≠|!=|opposite:)\s*/i, '').trim();
+        continue;
+      }
+      translationEn = cell;
+      continue;
+    }
+
+    if (rawWord && translationEn && !rawAntonym) {
+      rawAntonym = cell;
+      continue;
+    }
+  }
+
+  if (!rawWord) return null;
+
+  let gender: GrammaticalGender | undefined = undefined;
+  if (['der', 'die', 'das'].includes(rawArticle.toLowerCase())) {
+    gender = rawArticle.toLowerCase() as GrammaticalGender;
+  }
+
+  let cleanWord = rawWord.trim();
+  const leadingArt = cleanWord.match(/^(der|die|das)\s+(.+)$/i);
+  if (leadingArt) {
+    gender = leadingArt[1].toLowerCase() as GrammaticalGender;
+    cleanWord = leadingArt[2].trim();
+  }
+
+  const isIrregular = rawType.toLowerCase().includes('irregular') || rawType.toLowerCase().includes('شاذ');
+  const type: VocabType = rawType
+    ? determineType(rawType, cleanWord, gender)
+    : (gender || /^[A-ZÄÖÜ]/.test(cleanWord) ? 'noun' : determineType('', cleanWord, gender));
+
+  let pluralFormatted: string | undefined = undefined;
+  if (type === 'noun') {
+    if (rawPlural) {
+      pluralFormatted = expandPluralAbbreviation(cleanWord, rawPlural);
+    } else {
+      pluralFormatted = generateFallbackPlural(cleanWord, gender || inferGender(cleanWord));
+    }
+  }
+
+  let present3rd: string | undefined;
+  let praeteritum: string | undefined;
+  let perfekt: string | undefined;
+  if (type === 'verb' && rawConjugation) {
+    const parts = rawConjugation.split(',').map(s => s.trim());
+    if (parts.length >= 3) {
+      present3rd = parts[0];
+      praeteritum = parts[1];
+      perfekt = parts[2];
+    } else if (parts.length === 2) {
+      present3rd = parts[0];
+      praeteritum = parts[1];
+    } else if (parts.length === 1) {
+      present3rd = parts[0];
+    }
+  }
+
+  return {
+    id: `custom_${Date.now()}_${rowIdx}_${Math.random().toString(36).substr(2, 4)}`,
+    word: cleanWord,
+    type,
+    gender: type === 'noun' ? (gender || inferGender(cleanWord)) : undefined,
+    plural: pluralFormatted,
+    isIrregular,
+    present3rd,
+    praeteritum,
+    perfekt,
+    antonym: rawAntonym || undefined,
+    translationEn: translationEn || undefined,
+    translationAr: translationAr || 'بدون ترجمة',
+    exampleDe: exampleDe || undefined,
+    level: level || 'A1',
+    category: 'Allgemein',
+    masteryScore: 0,
+    attemptsCount: 0,
+    correctCount: 0,
+  };
+}
+
+export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
+  if (!rawRowsInput || rawRowsInput.length === 0) return [];
+
+  const rows: string[][] = rawRowsInput.map(row => {
+    if (row.length === 1 && (row[0].includes(',') || row[0].includes('\t') || row[0].includes(';') || row[0].includes('|'))) {
+      const delim = detectDelimiter(row[0]);
+      return parseCSVLine(row[0], delim);
+    }
+    return row;
+  });
+
+  const headerRow = rows[0].map(c => (c || '').toString().trim().toLowerCase());
+  const hasHeader = headerRow.some(cell =>
+    cell.includes('كلمة') || cell.includes('word') || cell.includes('ترجمة') || cell.includes('translation') ||
+    cell.includes('نوع') || cell.includes('type') || cell.includes('أداة') || cell.includes('article') ||
+    cell.includes('german') || cell.includes('wort') || cell.includes('plural') || cell.includes('level') ||
+    cell.includes('example') || cell.includes('مثال') || cell.includes('antonym') || cell.includes('conjugation') ||
+    cell.includes('cefr')
+  );
+
+  let typeIdx = -1;
+  let articleIdx = -1;
+  let wordIdx = -1;
+  let pluralIdx = -1;
+  let regIrregIdx = -1;
+  let conjugationIdx = -1;
+  let antonymIdx = -1;
+  let prepositionIdx = -1;
+  let prepositionCaseIdx = -1;
+  let translationIdx = -1;
+  let exampleIdx = -1;
+  let levelIdx = -1;
+
+  if (hasHeader) {
+    headerRow.forEach((col, idx) => {
+      const c = col.trim().toLowerCase();
+      if (c === 'type' || c.includes('نوع') || c === 'word type' || c === 'kategorie') typeIdx = idx;
+      else if (c === 'article' || c === 'gender' || c.includes('أداة') || c === 'geschlecht') articleIdx = idx;
+      else if (c === 'word' || c === 'the word' || c === 'german' || c === 'wort' || c === 'deutsch' || c.includes('كلمة') || c.includes('المفردة') || c.includes('الألماني')) wordIdx = idx;
+      else if (c === 'plural' || c.includes('جمع')) pluralIdx = idx;
+      else if (c === 'regular/irregular' || c === 'regular' || c === 'irregular' || c.includes('شاذ') || c.includes('عادي')) regIrregIdx = idx;
+      else if (c === 'conjegation' || c.includes('conjugation') || c.includes('تصريف') || c.includes('konjugation')) conjugationIdx = idx;
+      else if (c === 'preposition' || c.includes('حرف الجر') || c === 'prep') prepositionIdx = idx;
+      else if (c === 'case' || c.includes('preposition_case') || c.includes('preposition case') || c.includes('الحالة الإعرابية') || c.includes('الحالة') || c === 'prepositioncase' || c === 'prepcase') prepositionCaseIdx = idx;
+      else if (c === 'antonym' || c.includes('opposite') || c.includes('gegenteil') || c.includes('ضد') || c.includes('عكس')) antonymIdx = idx;
+      else if (c === 'en_translation' || c === 'en translation' || c === 'en' || c === 'translation' || c.includes('english') || c.includes('meaning') || c.includes('ترجمة')) translationIdx = idx;
+      else if (c.includes('example') || c.includes('beispiel') || c.includes('مثال') || c.includes('جملة')) exampleIdx = idx;
+      else if (c.includes('cefr') || c === 'level' || c.includes('مستوى') || c === 'stufe') levelIdx = idx;
+    });
+  }
+
+  const isStrict10Column = hasHeader && wordIdx !== -1 && (translationIdx !== -1 || typeIdx !== -1);
+
+  if (typeIdx === -1) typeIdx = 0;
+  if (articleIdx === -1) articleIdx = 1;
+  if (wordIdx === -1) wordIdx = 2;
+  if (pluralIdx === -1) pluralIdx = 3;
+  if (regIrregIdx === -1) regIrregIdx = 4;
+  if (conjugationIdx === -1) conjugationIdx = 5;
+  if (prepositionIdx === -1) prepositionIdx = 6;
+  if (prepositionCaseIdx === -1) prepositionCaseIdx = 7;
+  if (antonymIdx === -1) antonymIdx = 8;
+  if (translationIdx === -1) translationIdx = 9;
+  if (exampleIdx === -1) exampleIdx = 10;
+  if (levelIdx === -1) levelIdx = 11;
+
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const vocabItems: VocabItem[] = [];
+
+  const isHeaderString = (str: string) => {
+    const l = str.toLowerCase().trim();
+    return (
+      l.includes('type,article') ||
+      l.includes('word,plural') ||
+      l.includes('the word,plural') ||
+      l.includes('regular/irregular') ||
+      l.includes('conjegation') ||
+      l.includes('cefr level') ||
+      l === 'type' ||
+      l === 'article' ||
+      l === 'the word' ||
+      l === 'word' ||
+      l === 'plural' ||
+      l === 'regular/irregular' ||
+      l === 'conjegation' ||
+      l === 'conjugation' ||
+      l === 'antonym' ||
+      l === 'en_translation' ||
+      l === 'en translation' ||
+      l === 'example' ||
+      l === 'cefr level' ||
+      l === 'نوع' ||
+      l === 'أداة' ||
+      l === 'المفردة' ||
+      l === 'الكلمة'
+    );
+  };
+
+  dataRows.forEach((row, rowIdx) => {
+    if (!row || row.every(cell => !cell || !cell.trim())) return;
+
+    if (isStrict10Column && row.length >= 3) {
+      const getVal = (idx: number) => (idx !== -1 && idx < row.length ? row[idx]?.trim() : '');
+      const rawWord = getVal(wordIdx);
+      if (rawWord && !isHeaderString(rawWord)) {
+        const rawType = getVal(typeIdx);
+        const rawArticle = getVal(articleIdx);
+        const rawPlural = getVal(pluralIdx);
+        const rawRegIrreg = getVal(regIrregIdx);
+        const rawConjugation = getVal(conjugationIdx);
+        const rawAntonym = getVal(antonymIdx);
+        const rawPreposition = getVal(prepositionIdx);
+        const rawPrepositionCase = getVal(prepositionCaseIdx);
+        const rawTranslation = getVal(translationIdx);
+        const rawExample = getVal(exampleIdx);
+        const rawLevel = getVal(levelIdx);
+
+        let gender: GrammaticalGender | undefined = undefined;
+        const lowerArt = (rawArticle || '').toLowerCase();
+        if (['der', 'die', 'das'].includes(lowerArt)) {
+          gender = lowerArt as GrammaticalGender;
+        }
+
+        let cleanWord = rawWord;
+        const artMatch = cleanWord.match(/^(der|die|das)\s+(.+)$/i);
+        if (artMatch) {
+          gender = artMatch[1].toLowerCase() as GrammaticalGender;
+          cleanWord = artMatch[2].trim();
+        }
+
+        const lowerType = rawType.toLowerCase();
+        const lowerRegIrreg = rawRegIrreg.toLowerCase();
+        const isIrregular = lowerType.includes('irregular') || lowerRegIrreg.includes('irregular') || lowerRegIrreg.includes('شاذ');
+        const type: VocabType = rawType
+          ? determineType(rawType, cleanWord, gender)
+          : (gender || /^[A-ZÄÖÜ]/.test(cleanWord) ? 'noun' : determineType('', cleanWord, gender));
+
+        let present3rd: string | undefined;
+        let praeteritum: string | undefined;
+        let perfekt: string | undefined;
+        if (type === 'verb' && rawConjugation) {
+          const parts = rawConjugation.split(',').map(s => s.trim());
+          if (parts.length >= 3) {
+            present3rd = parts[0];
+            praeteritum = parts[1];
+            perfekt = parts[2];
+          } else if (parts.length === 2) {
+            present3rd = parts[0];
+            praeteritum = parts[1];
+          } else if (parts.length === 1) {
+            present3rd = parts[0];
+          }
+        }
+
+        const isAr = /[\u0600-\u06FF]/.test(rawTranslation);
+
+        vocabItems.push({
+          id: `gs_${Date.now()}_${rowIdx}`,
+          word: cleanWord,
+          type,
+          gender: type === 'noun' ? (gender || inferGender(cleanWord)) : undefined,
+          plural: type === 'noun' ? (rawPlural ? expandPluralAbbreviation(cleanWord, rawPlural) : generateFallbackPlural(cleanWord, gender || inferGender(cleanWord))) : undefined,
+          isIrregular,
+          present3rd,
+          praeteritum,
+          perfekt,
+          antonym: rawAntonym || undefined,
+          preposition: rawPreposition || undefined,
+          prepositionCase: (['Akkusativ', 'Dativ', 'Genitiv', 'Wechsel'].includes(rawPrepositionCase || '') ? rawPrepositionCase : undefined) as GrammaticalCase | undefined,
+          translationEn: !isAr ? rawTranslation : undefined,
+          translationAr: isAr ? rawTranslation : (rawTranslation || 'بدون ترجمة'),
+          exampleDe: rawExample || undefined,
+          level: (/^(A1|A2|B1|B2|C1|C2)$/i.test(rawLevel.trim()) ? rawLevel.trim().toUpperCase() : 'A1') as CefrLevel,
+          category: 'Allgemein',
+          masteryScore: 0,
+          attemptsCount: 0,
+          correctCount: 0,
+        });
+        return;
+      }
+    }
+
+    const item = parseRowContentHeuristic(row, rowIdx);
+    if (item) {
+      vocabItems.push(item);
+    }
+  });
+
+  return vocabItems;
+}
+

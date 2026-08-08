@@ -70,7 +70,7 @@ export const SentenceBuilder: React.FC<SentenceBuilderProps> = ({
           id: `task_${word.id}__${Date.now()}`,
           targetWord: word,
           sentenceEn: data.sentenceEn || `Translate a sentence using "${word.word}"`,
-          sentenceAr: data.sentenceAr || `Translation helper: ${word.translationAr}`,
+          sentenceAr: data.sentenceAr || `Translation helper: ${word.translationEn || word.translationAr}`,
           suggestedKeywordsDe: data.suggestedKeywordsDe || [],
           grammarHintAr: data.grammarHintAr || 'Pay attention to German word order and conjugations.',
         });
@@ -84,7 +84,7 @@ export const SentenceBuilder: React.FC<SentenceBuilderProps> = ({
         id: `task_fallback_${word.id}`,
         targetWord: word,
         sentenceEn: word.exampleDe ? `Please translate: "${word.exampleDe}"` : `Use the word "${word.word}" in a simple sentence.`,
-        sentenceAr: word.exampleAr || `Meaning: ${word.translationAr}`,
+        sentenceAr: `Translation: ${word.translationEn || word.translationAr}`,
         suggestedKeywordsDe: [word.word],
         grammarHintAr: 'Place the word in its correct grammatical position in the sentence.',
       });
@@ -158,26 +158,13 @@ export const SentenceBuilder: React.FC<SentenceBuilderProps> = ({
         <div className="flex items-center justify-between">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-extrabold border border-emerald-200 dark:border-emerald-800">
             <PenTool className="w-4 h-4" />
-            <span>Sentence Builder</span>
+            <span>German Sentence Practice</span>
           </div>
-          <button
-            onClick={() => setShowInfo(!showInfo)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
-            title="How it works"
-          >
-            <HelpCircle className="w-5 h-5" />
-          </button>
         </div>
 
         <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white mt-2">
-          German Sentence Translation & Building
+          German Sentence Builder & Translation
         </h2>
-
-        {showInfo && (
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-2 font-medium bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 animate-fade-in">
-            Translate the following sentences into German and receive instant grammatical feedback and corrections.
-          </p>
-        )}
       </div>
 
       {/* MAIN SENTENCE PRACTICE CARD */}

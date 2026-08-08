@@ -154,7 +154,7 @@ export const AiChatTrainer: React.FC<AiChatTrainerProps> = ({
       });
 
       if (!response.ok) {
-        throw new Error('فشل التقييم من خادم الذكاء الاصطناعي');
+        throw new Error('AI evaluation failed');
       }
 
       const evalData = await response.json();
@@ -182,16 +182,16 @@ export const AiChatTrainer: React.FC<AiChatTrainerProps> = ({
       const fallbackAiMsg: ChatMessage = {
         id: makeMsgId('msg_ai_fallback'),
         sender: 'ai',
-        text: `الكلمة: ${currentTargetWord.gender || ''} ${currentTargetWord.word} (${currentTargetWord.translationAr})`,
+        text: `Word: ${currentTargetWord.gender || ''} ${currentTargetWord.word} (${currentTargetWord.translationEn || currentTargetWord.translationAr})`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         targetWord: currentTargetWord,
         evaluation: {
           isCorrect: isGenderMatch,
           overallScore: isGenderMatch ? 80 : 40,
           feedbackAr: isGenderMatch
-            ? `أحسنت! الجنس الصحيح هو ${currentTargetWord.gender}.`
-            : `الأداة الصحيحة هي ${currentTargetWord.gender || ''} ${currentTargetWord.word}.`,
-          grammarTipAr: currentTargetWord.exampleDe ? `مثال: ${currentTargetWord.exampleDe}` : undefined,
+            ? `Great job! The correct article is ${currentTargetWord.gender}.`
+            : `The correct article is ${currentTargetWord.gender || ''} ${currentTargetWord.word}.`,
+          grammarTipAr: currentTargetWord.exampleDe ? `Example: ${currentTargetWord.exampleDe}` : undefined,
           masteryDelta: isGenderMatch ? 15 : -5,
         },
       };
@@ -231,7 +231,7 @@ export const AiChatTrainer: React.FC<AiChatTrainerProps> = ({
       const aiMsg: ChatMessage = {
         id: makeMsgId('msg_ai_gen'),
         sender: 'ai',
-        text: data.text || 'شرح الذكاء الاصطناعي غير متوفر الآن.',
+        text: data.text || 'AI explanation is currently unavailable.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
@@ -337,7 +337,7 @@ export const AiChatTrainer: React.FC<AiChatTrainerProps> = ({
                 <AudioPlayer text={currentTargetWord.word} size="lg" />
               </div>
               <p className="text-xs text-slate-300 mt-2 font-medium">
-                Translation: <span className="text-amber-300 font-bold">{currentTargetWord.translationAr}</span>
+                Translation: <span className="text-amber-300 font-bold">{currentTargetWord.translationEn || currentTargetWord.translationAr}</span>
               </p>
             </div>
 

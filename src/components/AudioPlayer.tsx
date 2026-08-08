@@ -21,7 +21,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     if (!text || !text.trim()) return;
 
     if (!('speechSynthesis' in window)) {
-      alert('المتصفح لا يدعم نطق الصوت المباشر.');
+      alert('Your browser does not support audio playback.');
       return;
     }
 
@@ -68,7 +68,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   return (
     <button
       onClick={speak}
-      title="استمع للنطق الألماني"
+      title="Listen to German pronunciation"
       type="button"
       className={`inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 transition-colors dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300 ${buttonPaddings[size]} ${className}`}
     >
