@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { VocabItem, VocabType, GrammaticalGender, GrammaticalCase, CefrLevel, getVocabItemKey } from '../types';
 import { AudioPlayer } from './AudioPlayer';
-import { parseVocabFile, parseExcelBuffer, parseGoogleSheetRows, inferGender, generateFallbackPlural, exportVocabToCSV, exportVocabToExcelBuffer, cleanGermanCategory } from '../services/vocabParser';
+import { parseVocabFile, parseExcelBuffer, parseGoogleSheetRows, parseTextOrCSV, parseRowContentHeuristic, inferGender, generateFallbackPlural, exportVocabToCSV, exportVocabToExcelBuffer, cleanGermanCategory } from '../services/vocabParser';
 import {
   initGoogleAuth,
   googleSignIn,
@@ -1227,7 +1227,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     }
   };
 
-  // Handle AI Smart Bulk Parsing Endpoint (Gemini AI)
+  // Handle Local Client-side Bulk Text Parsing
   const handleAiBulkParse = async () => {
     const rawText = importTab === 'manual' ? manualInputText : fileText;
     if (!rawText.trim() || isAiBulkParsing) {
@@ -1239,44 +1239,14 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     setAiBulkParsedItems(null);
 
     try {
-      const res = await fetch('/api/vocab/parse-bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ textInput: rawText.trim() }),
-      });
-
-      const data = await res.json();
-      if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        const normalized: VocabItem[] = data.items.map((raw: any, idx: number) => ({
-          id: `ai_bulk_${Date.now()}_${idx}`,
-          word: raw.word,
-          type: (raw.type as VocabType) || 'noun',
-          gender: raw.gender,
-          plural: raw.plural,
-          translationAr: raw.translationAr,
-          level: 'A1',
-          category: raw.category || 'Smart Import',
-          isIrregular: raw.isIrregular,
-          present3rd: raw.present3rd,
-          praeteritum: raw.praeteritum,
-          perfekt: raw.perfekt,
-          antonym: raw.antonym,
-          case: raw.case,
-          exampleDe: raw.exampleDe,
-          exampleAr: raw.exampleAr,
-          masteryScore: 0,
-          attemptsCount: 0,
-          correctCount: 0,
-        }));
-
-        processItemsForPreview(normalized);
+      const parsedItems = parseTextOrCSV(rawText.trim());
+      if (parsedItems && Array.isArray(parsedItems) && parsedItems.length > 0) {
+        processItemsForPreview(parsedItems);
       } else {
-        showToast('Could not extract data via AI. Falling back to direct import.');
         handleProcessAndImportSpreadsheet();
       }
     } catch (err) {
-      console.error('AI Bulk Parse Error:', err);
-      showToast('Error connecting to AI. Falling back to direct import.');
+      console.error('Bulk Parse Error:', err);
       handleProcessAndImportSpreadsheet();
     } finally {
       setIsAiBulkParsing(false);
@@ -1380,109 +1350,9 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     };
 
     try {
-      const res = await fetch('/api/vocab/parse-smart', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wordInput: rawInput }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
-
-      const data = await res.json();
-
-      if (data && data.word && (data.translationAr || data.translationEn) && !data.error) {
-        let rawTypeStr = (data.type as string || '').toLowerCase().trim();
-        let normalizedType: VocabType = 'Others';
-        if (rawTypeStr.includes('adverb') || rawTypeStr.includes('ظرف') || rawTypeStr === 'adv' || rawTypeStr === 'adv.') {
-          normalizedType = 'Others';
-        } else if (rawTypeStr.includes('expression') || rawTypeStr.includes('phrase') || rawTypeStr.includes('redewendung') || rawTypeStr.includes('تعبير') || rawTypeStr.includes('عبارة')) {
-          normalizedType = 'expression';
-        } else if ((rawTypeStr.includes('verb') && !rawTypeStr.includes('adverb')) || rawTypeStr.includes('فعل')) {
-          normalizedType = 'verb';
-        } else if (rawTypeStr.includes('adj') || rawTypeStr.includes('صفة')) {
-          normalizedType = 'adjective';
-        } else if (rawTypeStr.includes('prep') || rawTypeStr.includes('حرف')) {
-          normalizedType = 'Others';
-        } else if (rawTypeStr.includes('noun') || rawTypeStr.includes('nomen') || rawTypeStr.includes('اسم') || data.gender || /^[A-ZÄÖÜ]/.test(data.word)) {
-          normalizedType = 'noun';
-        }
-
-        let present3rd = data.present3rd;
-        let praeteritum = data.praeteritum;
-        let perfekt = data.perfekt;
-        let isIrregular = Boolean(data.isIrregular);
-
-        if (normalizedType === 'verb') {
-          const conjugations = getVerbConjugations({
-            word: data.word,
-            present3rd: data.present3rd,
-            praeteritum: data.praeteritum,
-            perfekt: data.perfekt,
-          });
-          present3rd = conjugations.present3rd;
-          praeteritum = conjugations.praeteritum;
-          perfekt = conjugations.perfekt;
-          isIrregular = checkIsIrregularVerb({
-            word: data.word,
-            present3rd,
-            praeteritum,
-            perfekt,
-          });
-        }
-
-        const transAr = data.translationAr || data.translationEn || rawInput;
-        const transEn = data.translationEn || data.translationAr || rawInput;
-
-        let exampleDe = data.exampleDe;
-        let exampleAr = data.exampleAr;
-
-        if (!exampleDe || exampleDe.trim().length < 3) {
-          if (normalizedType === 'noun') {
-            const art = data.gender || 'der';
-            exampleDe = `Das ist ${art} ${data.word}.`;
-            exampleAr = `هذا هو ${transAr}.`;
-          } else if (normalizedType === 'verb') {
-            exampleDe = `Ich möchte ${data.word}.`;
-            exampleAr = `أريد أن ${transAr}.`;
-          } else {
-            exampleDe = `Das ist ${data.word}.`;
-            exampleAr = `هذا ${transAr}.`;
-          }
-        }
-
-        const newItem: VocabItem = {
-          id: `smart_${Date.now()}`,
-          word: data.word,
-          type: normalizedType,
-          gender: normalizedType === 'noun' ? (data.gender || 'der') : undefined,
-          plural: normalizedType === 'noun' ? data.plural : undefined,
-          translationEn: transEn,
-          translationAr: transAr,
-          level: 'A1',
-          category: data.category || 'Personal Entry',
-          isIrregular,
-          present3rd,
-          praeteritum,
-          perfekt,
-          antonym: data.antonym,
-          case: data.case,
-          preposition: data.preposition,
-          prepositionCase: (['Akkusativ', 'Dativ', 'Genitiv', 'Wechsel'].includes(data.prepositionCase) ? data.prepositionCase : undefined) as GrammaticalCase | undefined,
-          exampleDe,
-          exampleAr,
-          masteryScore: 0,
-          attemptsCount: 0,
-          correctCount: 0,
-        };
-
-        setSmartParsedItem(newItem);
-      } else {
-        setSmartParsedItem(createFallbackItem(rawInput));
-      }
+      const parsed = parseRowContentHeuristic([rawInput]) || createFallbackItem(rawInput);
+      setSmartParsedItem(parsed);
     } catch (err) {
-      console.warn('Smart Word Parse fetch fallback activated:', err);
       setSmartParsedItem(createFallbackItem(rawInput));
     } finally {
       setIsSmartParsing(false);
