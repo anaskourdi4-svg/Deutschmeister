@@ -1,12 +1,54 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
-    base: './',
-    plugins: [react(), tailwindcss()],
+    base: '/Deutschmeister/',
+    plugins: [
+      react(),
+      tailwindcss(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        manifest: {
+          name: 'Deutschmeister',
+          short_name: 'Deutschmeister',
+          description: 'تطبيق متكامل لتعلم واختبار المفردات الألمانية لمستوى A1',
+          theme_color: '#4f46e5',
+          background_color: '#0f172a',
+          display: 'standalone',
+          orientation: 'portrait',
+          start_url: '/Deutschmeister/',
+          scope: '/Deutschmeister/',
+          icons: [
+            {
+              src: 'pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any maskable',
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable',
+            },
+            {
+              src: 'icon.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+              purpose: 'any',
+            },
+          ],
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        },
+      }),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
