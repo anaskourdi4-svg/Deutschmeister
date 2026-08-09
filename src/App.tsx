@@ -8,6 +8,7 @@ import { VocabManager } from './components/VocabManager';
 import { TrainingStats } from './components/TrainingStats';
 import { DecksManager } from './components/DecksManager';
 import { SettingsManager } from './components/SettingsManager';
+import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 
 const SETS_STORAGE_KEY = 'deutsch_meister_vocab_sets_v3';
 const ACTIVE_SET_KEY = 'deutsch_meister_active_set_v3';
@@ -423,6 +424,9 @@ export default function App() {
           </p>
         </div>
       </footer>
+
+      {/* PWA Floating Install Prompt */}
+      <PWAInstallPrompt />
 
     </div>
   );
