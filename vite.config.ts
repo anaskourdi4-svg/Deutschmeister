@@ -13,7 +13,7 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         manifestFilename: 'manifest.json',
-        includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-screenshot-wide.png', 'pwa-screenshot-mobile.png'],
         manifest: {
           id: './',
           name: 'Deutschmeister',
@@ -55,6 +55,22 @@ export default defineConfig(() => {
               sizes: '512x512',
               type: 'image/svg+xml',
               purpose: 'any',
+            },
+          ],
+          screenshots: [
+            {
+              src: 'pwa-screenshot-wide.png',
+              sizes: '1280x720',
+              type: 'image/png',
+              form_factor: 'wide',
+              label: 'Deutschmeister Desktop View',
+            },
+            {
+              src: 'pwa-screenshot-mobile.png',
+              sizes: '540x960',
+              type: 'image/png',
+              form_factor: 'narrow',
+              label: 'Deutschmeister Mobile View',
             },
           ],
         },
