@@ -2,33 +2,33 @@
   "name": "Deutschmeister",
   "short_name": "Deutschmeister",
   "description": "تطبيق متكامل لتعلم واختبار المفردات الألمانية لمستوى A1",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "/Deutschmeister/",
+  "scope": "/Deutschmeister/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "icons": [
     {
-      "src": "pwa-192x192.png",
+      "src": "/Deutschmeister/pwa-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "pwa-192x192.png",
+      "src": "/Deutschmeister/pwa-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "pwa-512x512.png",
+      "src": "/Deutschmeister/pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "pwa-512x512.png",
+      "src": "/Deutschmeister/pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
