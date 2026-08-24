@@ -770,7 +770,102 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
 
   const correctCount = sessionItems.filter(isItemCorrect).length;
   const incorrectCount = answeredCount - correctCount;
-  const accuracyPercent = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+
+  // Calculate question-level accuracy based on all answered sub-questions (not just whole cards)
+  let totalQuestionsAnswered = 0;
+  let totalQuestionsCorrect = 0;
+
+  sessionItems.forEach(it => {
+    const st = answers[it.id];
+    if (!st) return;
+    const itemType = getNormalizedType(it);
+
+    // 1. Translation Question
+    if (st.translationChecked) {
+      totalQuestionsAnswered += 1;
+      const target = (it.translationEn || it.translationAr || '').trim().toLowerCase();
+      if (st.selectedTranslation?.trim().toLowerCase() === target) {
+        totalQuestionsCorrect += 1;
+      }
+    }
+
+    // 2. Article Question
+    if (st.articleChecked) {
+      totalQuestionsAnswered += 1;
+      if (st.selectedArticle === it.gender) {
+        totalQuestionsCorrect += 1;
+      }
+    }
+
+    // 3. Plural Question
+    if (st.pluralChecked) {
+      totalQuestionsAnswered += 1;
+      if (evaluatePluralAnswer(st.pluralInput || '', it.plural)) {
+        totalQuestionsCorrect += 1;
+      }
+    }
+
+    // 4. Verb Conjugations (each requested conjugation counts as a question)
+    if (st.verbChecked && itemType === 'verb') {
+      const hasPres = Boolean(it.present3rd && it.present3rd.trim());
+      const hasPraet = Boolean(it.praeteritum && it.praeteritum.trim());
+      const hasPerf = Boolean(it.perfekt && it.perfekt.trim());
+
+      if (settings.verbs.present3rd && hasPres) {
+        totalQuestionsAnswered += 1;
+        if (evaluateGermanAnswer(st.present3rdInput || '', it.present3rd!)) {
+          totalQuestionsCorrect += 1;
+        }
+      }
+      if (settings.verbs.praeteritum && hasPraet) {
+        totalQuestionsAnswered += 1;
+        if (evaluateGermanAnswer(st.praeteritumInput || '', it.praeteritum!)) {
+          totalQuestionsCorrect += 1;
+        }
+      }
+      if (settings.verbs.perfekt && hasPerf) {
+        totalQuestionsAnswered += 1;
+        if (evaluateGermanAnswer(st.perfektInput || '', it.perfekt!, true)) {
+          totalQuestionsCorrect += 1;
+        }
+      }
+    }
+
+    // 5. Antonyms
+    if (st.antonymChecked) {
+      totalQuestionsAnswered += 1;
+      const target = (it.antonym || getFallbackAntonym(it.word)).trim().toLowerCase();
+      if (st.selectedAntonym?.trim().toLowerCase() === target) {
+        totalQuestionsCorrect += 1;
+      }
+    }
+
+    // 6. Preposition & Case
+    if (st.prepositionChecked && it.preposition && it.preposition.trim()) {
+      const fullPhrase = getPrepositionPhraseFromExample(it.exampleDe, it.preposition);
+      const inputVal = (st.prepositionInput || '').trim();
+      const isPrepOk = evaluateGermanAnswer(inputVal, it.preposition) ||
+        (fullPhrase ? evaluateGermanAnswer(inputVal, fullPhrase) : false) ||
+        (fullPhrase ? inputVal.toLowerCase() === fullPhrase.toLowerCase() : false);
+
+      totalQuestionsAnswered += 1;
+      if (isPrepOk) {
+        totalQuestionsCorrect += 1;
+      }
+
+      if (it.prepositionCase) {
+        totalQuestionsAnswered += 1;
+        const isCaseOk = (st.prepositionCaseSelected || '').trim().toLowerCase() === it.prepositionCase.trim().toLowerCase();
+        if (isCaseOk) {
+          totalQuestionsCorrect += 1;
+        }
+      }
+    }
+  });
+
+  const accuracyPercent = totalQuestionsAnswered > 0
+    ? Math.round((totalQuestionsCorrect / totalQuestionsAnswered) * 100)
+    : 0;
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -1182,13 +1277,18 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
             </div>
 
             <div className="bg-emerald-50/80 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 p-4 rounded-2xl text-center space-y-1">
-              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-300 block">Correct</span>
+              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-300 block">Correct Words</span>
               <span className="text-2xl font-black text-emerald-700 dark:text-emerald-300">{correctCount}</span>
             </div>
 
             <div className="bg-amber-50/80 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 p-4 rounded-2xl text-center space-y-1">
               <span className="text-xs font-extrabold text-amber-700 dark:text-amber-300 block">Accuracy</span>
               <span className="text-2xl font-black text-amber-800 dark:text-amber-200">{accuracyPercent}%</span>
+              {totalQuestionsAnswered > 0 && (
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 block">
+                  {totalQuestionsCorrect}/{totalQuestionsAnswered} questions
+                </span>
+              )}
             </div>
           </div>
 
@@ -1216,18 +1316,28 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
               return evaluatePluralAnswer(st.pluralInput || '', it.plural);
             }).length;
 
-            const verbAns = sessionItems.filter(it => answers[it.id]?.verbChecked).length;
-            const verbCorr = sessionItems.filter(it => {
+            let verbAns = 0;
+            let verbCorr = 0;
+            sessionItems.forEach(it => {
               const st = answers[it.id];
-              if (!st?.verbChecked) return false;
+              if (!st?.verbChecked || getNormalizedType(it) !== 'verb') return;
               const hasPres = Boolean(it.present3rd && it.present3rd.trim());
               const hasPraet = Boolean(it.praeteritum && it.praeteritum.trim());
               const hasPerf = Boolean(it.perfekt && it.perfekt.trim());
-              const presOk = !settings.verbs.present3rd || !hasPres || evaluateGermanAnswer(st.present3rdInput || '', it.present3rd!);
-              const praetOk = !settings.verbs.praeteritum || !hasPraet || evaluateGermanAnswer(st.praeteritumInput || '', it.praeteritum!);
-              const perfOk = !settings.verbs.perfekt || !hasPerf || evaluateGermanAnswer(st.perfektInput || '', it.perfekt!, true);
-              return presOk && praetOk && perfOk;
-            }).length;
+
+              if (settings.verbs.present3rd && hasPres) {
+                verbAns += 1;
+                if (evaluateGermanAnswer(st.present3rdInput || '', it.present3rd!)) verbCorr += 1;
+              }
+              if (settings.verbs.praeteritum && hasPraet) {
+                verbAns += 1;
+                if (evaluateGermanAnswer(st.praeteritumInput || '', it.praeteritum!)) verbCorr += 1;
+              }
+              if (settings.verbs.perfekt && hasPerf) {
+                verbAns += 1;
+                if (evaluateGermanAnswer(st.perfektInput || '', it.perfekt!, true)) verbCorr += 1;
+              }
+            });
 
             const antonymAns = sessionItems.filter(it => answers[it.id]?.antonymChecked).length;
             const antonymCorr = sessionItems.filter(it => {
@@ -1237,12 +1347,34 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
               return st.selectedAntonym?.trim().toLowerCase() === target;
             }).length;
 
+            let prepAns = 0;
+            let prepCorr = 0;
+            sessionItems.forEach(it => {
+              const st = answers[it.id];
+              if (!st?.prepositionChecked || !it.preposition || !it.preposition.trim()) return;
+              const fullPhrase = getPrepositionPhraseFromExample(it.exampleDe, it.preposition);
+              const inputVal = (st.prepositionInput || '').trim();
+              const isPrepOk = evaluateGermanAnswer(inputVal, it.preposition) ||
+                (fullPhrase ? evaluateGermanAnswer(inputVal, fullPhrase) : false) ||
+                (fullPhrase ? inputVal.toLowerCase() === fullPhrase.toLowerCase() : false);
+
+              prepAns += 1;
+              if (isPrepOk) prepCorr += 1;
+
+              if (it.prepositionCase) {
+                prepAns += 1;
+                const isCaseOk = (st.prepositionCaseSelected || '').trim().toLowerCase() === it.prepositionCase.trim().toLowerCase();
+                if (isCaseOk) prepCorr += 1;
+              }
+            });
+
             const qTypeStats = [
               { key: 'translation', labelEn: 'Translation', icon: Languages, ans: translationAns, corr: translationCorr },
               { key: 'article', labelEn: 'Articles', icon: Tag, ans: articleAns, corr: articleCorr },
               { key: 'plural', labelEn: 'Plural Form', icon: Layers, ans: pluralAns, corr: pluralCorr },
               { key: 'conjugation', labelEn: 'Verb Conjugation', icon: Zap, ans: verbAns, corr: verbCorr },
               { key: 'antonym', labelEn: 'Antonyms', icon: ArrowLeftRight, ans: antonymAns, corr: antonymCorr },
+              { key: 'preposition', labelEn: 'Prepositions & Cases', icon: BookOpen, ans: prepAns, corr: prepCorr },
             ].filter(q => q.ans > 0).map(q => ({
               ...q,
               pct: Math.round((q.corr / q.ans) * 100)

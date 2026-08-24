@@ -423,7 +423,7 @@ const VocabCard: React.FC<VocabCardProps> = ({
       {item.exampleDe && (
         <div className="pt-2 border-t border-slate-100 dark:border-slate-800 mt-2">
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 dir-ltr leading-snug">
-            <span className="font-extrabold text-slate-400 mr-1.5 uppercase text-[10px]">Example:</span>
+            <span className="font-extrabold text-slate-400 mr-2 uppercase text-[10px]">Example: </span>
             <span>{item.exampleDe}</span>
           </p>
         </div>
