@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   Layers,
   AlertCircle,
+  MoreVertical,
+  FolderInput,
 } from 'lucide-react';
 
 interface DecksManagerProps {
@@ -26,6 +28,7 @@ interface DecksManagerProps {
   onSelectVocabSet: (id: string) => void;
   onCreateVocabSet: (name: string, levelGroup?: string) => void;
   onRenameVocabSet: (id: string, newName: string) => void;
+  onMoveVocabSet?: (id: string, targetGroup: string) => void;
   onDeleteVocabSet: (id: string) => void;
   onBatchImportSets?: (sets: VocabSet[], targetGroup?: string) => void;
   onExportAllSets?: () => void;
@@ -48,6 +51,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   onSelectVocabSet,
   onCreateVocabSet,
   onRenameVocabSet,
+  onMoveVocabSet,
   onDeleteVocabSet,
   onBatchImportSets,
   onExportAllSets,
@@ -67,6 +71,11 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [showExportModal, setShowExportModal] = useState(false);
   const [showExportGroupModal, setShowExportGroupModal] = useState(false);
 
+  // 3-dots dropdown menu state & Move deck state
+  const [openMenuSetId, setOpenMenuSetId] = useState<string | null>(null);
+  const [movingDeck, setMovingDeck] = useState<VocabSet | null>(null);
+  const [targetMoveGroup, setTargetMoveGroup] = useState<string>('A1');
+
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [showInfoHeader, setShowInfoHeader] = useState(false);
   const [stagedSetId, setStagedSetId] = useState<string>(activeSetId);
@@ -74,6 +83,15 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   useEffect(() => {
     setStagedSetId(activeSetId);
   }, [activeSetId]);
+
+  // Click outside to close 3-dots menu
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setOpenMenuSetId(null);
+    };
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, []);
 
   const currentSet = vocabSets.find(s => s.id === activeSetId) || vocabSets[0];
 
@@ -395,6 +413,109 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
 
       </div>
 
+      {/* Move Deck Modal */}
+      {movingDeck && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-400 rounded-2xl shrink-0">
+                  <FolderInput className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">نقل الـ Deck إلى مجموعة أخرى</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Move Deck to another Group</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMovingDeck(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+              <div className="min-w-0 pr-2">
+                <span className="text-[10px] uppercase font-extrabold text-slate-400 block">Deck Name</span>
+                <span className="text-xs font-black text-slate-800 dark:text-slate-100 truncate block">{movingDeck.name}</span>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-[10px] uppercase font-extrabold text-slate-400 block">Current Group</span>
+                <span className="text-xs font-black text-purple-600 dark:text-purple-400">{getDeckGroup(movingDeck)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-700 dark:text-slate-300 block">
+                اختر المجموعة الهدف (Target Group):
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {GROUPS_LIST.map(g => {
+                  const isCurrent = getDeckGroup(movingDeck) === g.id;
+                  const isSelected = targetMoveGroup === g.id;
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => setTargetMoveGroup(g.id)}
+                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                        isSelected
+                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/60 ring-2 ring-purple-500/20'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-purple-300 bg-white dark:bg-slate-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${g.badgeClass}`}>
+                          {g.id}
+                        </span>
+                        {isCurrent && (
+                          <span className="text-[10px] text-slate-400 font-bold">(Current)</span>
+                        )}
+                      </div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white truncate">
+                        {g.name}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setMovingDeck(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+              >
+                إلغاء (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onMoveVocabSet && movingDeck) {
+                    onMoveVocabSet(movingDeck.id, targetMoveGroup);
+                    const targetGrp = GROUPS_LIST.find(g => g.id === targetMoveGroup);
+                    setImportNotice(`تم نقل الـ Deck "${movingDeck.name}" إلى مجموعة ${targetGrp?.name || targetMoveGroup} بنجاح!`);
+                    setTimeout(() => setImportNotice(null), 4000);
+                  }
+                  setMovingDeck(null);
+                }}
+                disabled={getDeckGroup(movingDeck) === targetMoveGroup}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+              >
+                <FolderInput className="w-3.5 h-3.5" />
+                <span>تأكيد النقل (Confirm Move)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Export Confirmation Modal */}
       {showExportModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
@@ -465,6 +586,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   {matchingSearchDecks.map(set => {
                     const isStaged = set.id === stagedSetId;
                     const isCurrentlyActive = set.id === activeSetId;
+                    const isEditing = editingSetId === set.id;
+                    const isDeleting = deletingSetId === set.id;
                     const groupName = getDeckGroup(set);
                     const grpMeta = GROUPS_LIST.find(g => g.id === groupName) || GROUPS_LIST[0];
                     const masteryPct = calculateDeckMastery(set);
@@ -479,35 +602,130 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                             : 'bg-white dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:border-slate-300'
                         }`}
                       >
-                        <div className="flex-1 flex items-center gap-3 min-w-0">
-                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${
-                            isStaged ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700'
-                          }`}>
-                            {isStaged && <Check className="w-3.5 h-3.5" />}
+                        {isDeleting ? (
+                          <div className="flex-1 flex items-center justify-between gap-2 bg-rose-50 dark:bg-rose-950/60 p-2.5 rounded-xl border border-rose-200 dark:border-rose-800 animate-fade-in" onClick={e => e.stopPropagation()}>
+                            <span className="text-xs font-extrabold text-rose-700 dark:text-rose-300">
+                              Delete this deck?
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onDeleteVocabSet(set.id);
+                                  setDeletingSetId(null);
+                                }}
+                                className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-black cursor-pointer shadow-xs"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeletingSetId(null)}
+                                className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
+                        ) : isEditing ? (
+                          <div className="flex-1 flex gap-2" onClick={e => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={editingName}
+                              onChange={e => setEditingName(e.target.value)}
+                              className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={() => handleRenameSubmit(set.id)}
+                              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingSetId(null)}
+                              className="px-2 py-1.5 text-slate-500 text-xs font-bold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex-1 flex items-center gap-3 min-w-0">
+                              <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                                isStaged ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700'
+                              }`}>
+                                {isStaged && <Check className="w-3.5 h-3.5" />}
+                              </div>
 
-                          <div className="min-w-0">
-                            <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2 truncate">
-                              <span className="truncate">{set.name}</span>
-                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${grpMeta.badgeClass}`}>
-                                {grpMeta.name}
-                              </span>
-                              {isCurrentlyActive && (
-                                <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md shrink-0">
-                                  Active
-                                </span>
+                              <div className="min-w-0">
+                                <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2 truncate">
+                                  <span className="truncate">{set.name}</span>
+                                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${grpMeta.badgeClass}`}>
+                                    {grpMeta.name}
+                                  </span>
+                                  {isCurrentlyActive && (
+                                    <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-md shrink-0">
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                                    {set.items?.length || 0} words
+                                  </span>
+                                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                                    {masteryPct}%
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 3-dots Menu Button */}
+                            <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => setOpenMenuSetId(openMenuSetId === set.id ? null : set.id)}
+                                title="Deck Options"
+                                className={`p-1.5 rounded-xl transition-all cursor-pointer border ${
+                                  openMenuSetId === set.id
+                                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                    : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 border-transparent'
+                                }`}
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+
+                              {openMenuSetId === set.id && (
+                                <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuSetId(null);
+                                      setMovingDeck(set);
+                                      setTargetMoveGroup(getDeckGroup(set));
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-purple-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                  >
+                                    <FolderInput className="w-4 h-4 text-purple-500 shrink-0" />
+                                    <span>نقل لمجموعة (Move)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuSetId(null);
+                                      handleExportSingleDeck(set);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                  >
+                                    <Download className="w-4 h-4 text-slate-400 shrink-0" />
+                                    <span>تصدير (Export JSON)</span>
+                                  </button>
+                                </div>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                                {set.items?.length || 0} words
-                              </span>
-                              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                                {masteryPct}%
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                          </>
+                        )}
                       </div>
                     );
                   })}
@@ -861,32 +1079,49 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditingSetId(set.id);
-                                setEditingName(set.name);
-                                setDeletingSetId(null);
-                              }}
-                              title="Edit name"
-                              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-
+                          {/* 3-dots Menu Button */}
+                          <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeletingSetId(set.id);
-                                setEditingSetId(null);
-                              }}
-                              title="Delete deck"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 rounded-lg transition-colors cursor-pointer"
+                              onClick={() => setOpenMenuSetId(openMenuSetId === set.id ? null : set.id)}
+                              title="Deck Options"
+                              className={`p-1.5 rounded-xl transition-all cursor-pointer border ${
+                                openMenuSetId === set.id
+                                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                  : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 border-transparent'
+                              }`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <MoreVertical className="w-4 h-4" />
                             </button>
+
+                            {openMenuSetId === set.id && (
+                              <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSetId(null);
+                                    setMovingDeck(set);
+                                    setTargetMoveGroup(getDeckGroup(set));
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-purple-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                >
+                                  <FolderInput className="w-4 h-4 text-purple-500 shrink-0" />
+                                  <span>نقل لمجموعة (Move)</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSetId(null);
+                                    handleExportSingleDeck(set);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                >
+                                  <Download className="w-4 h-4 text-slate-400 shrink-0" />
+                                  <span>تصدير (Export JSON)</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </>
                       )}

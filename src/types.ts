@@ -28,6 +28,9 @@ export interface VocabItem {
   // Adjectives
   antonym?: string; // e.g. "klein" for "groß" (Gegenteil)
   
+  // Starred / Favorite status
+  isStarred?: boolean;
+  
   // Prepositions & Fixed Prepositions with Case (e.g. sich kümmern + um + Akkusativ)
   case?: GrammaticalCase; // e.g. "Dativ" or "Akkusativ" (for prepositions)
   preposition?: string; // e.g. "um", "auf", "mit", "an", "bei" (fixed verb/expression preposition)

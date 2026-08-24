@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { VocabItem, QuizQuestionSettings, DEFAULT_QUIZ_SETTINGS } from '../types';
 import { AudioPlayer } from './AudioPlayer';
 import {
-  getVerbConjugations,
   evaluateGermanAnswer,
   evaluatePluralAnswer,
   checkIsIrregularVerb,
@@ -553,6 +552,13 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
 
     if (vocabList.length > 0 && (sessionItems.length === 0 || deckChanged)) {
       startSession(sessionConfig.count, sessionConfig.wordType || 'all', sessionConfig.hardWordsOnly ?? false, sessionConfig.useSrs ?? true);
+    } else if (sessionItems.length > 0) {
+      // Keep sessionItems in sync with live vocabList items so any card edits immediately reflect in practice
+      setSessionItems(prev =>
+        prev
+          .map(p => vocabList.find(v => v.id === p.id) || p)
+          .filter(p => vocabList.some(v => v.id === p.id))
+      );
     }
   }, [vocabList, activeSetId]);
 
@@ -627,15 +633,24 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     if (itemType === 'verb') {
       let answered = true;
       if (settings.verbs.translation) answered = answered && !!st.translationChecked;
-      if (settings.verbs.present3rd || settings.verbs.praeteritum || settings.verbs.perfekt) answered = answered && !!st.verbChecked;
+      const hasPres = Boolean(item.present3rd && item.present3rd.trim());
+      const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
+      const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
+      const hasAnyConjugation = (settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf);
+      if (hasAnyConjugation) {
+        answered = answered && !!st.verbChecked;
+      }
       if ((settings.verbs.prepositionCase ?? true) && item.preposition) answered = answered && !!st.prepositionChecked;
       return answered;
     }
     if (itemType === 'noun') {
       let answered = true;
       if (settings.nouns.translation) answered = answered && !!st.translationChecked;
-      if (settings.nouns.article) answered = answered && !!st.articleChecked;
-      if (settings.nouns.plural && item.plural) answered = answered && !!st.pluralChecked;
+      if (settings.nouns.article && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das')) {
+        answered = answered && !!st.articleChecked;
+      }
+      const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
+      if (settings.nouns.plural && hasPlural) answered = answered && !!st.pluralChecked;
       return answered;
     }
     if (itemType === 'expression') {
@@ -703,10 +718,11 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       if (settings.nouns.translation) {
         ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
       }
-      if (settings.nouns.article) {
+      if (settings.nouns.article && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das')) {
         ok = ok && st.selectedArticle === item.gender;
       }
-      if (settings.nouns.plural && item.plural) {
+      const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
+      if (settings.nouns.plural && hasPlural) {
         ok = ok && evaluatePluralAnswer(st.pluralInput || '', item.plural);
       }
       return ok;
@@ -717,15 +733,18 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       if (settings.verbs.translation) {
         ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
       }
-      const conjugations = getVerbConjugations(item);
-      if (settings.verbs.present3rd) {
-        ok = ok && evaluateGermanAnswer(st.present3rdInput || '', conjugations.present3rd);
+      const hasPres = Boolean(item.present3rd && item.present3rd.trim());
+      const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
+      const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
+
+      if (settings.verbs.present3rd && hasPres) {
+        ok = ok && evaluateGermanAnswer(st.present3rdInput || '', item.present3rd!);
       }
-      if (settings.verbs.praeteritum) {
-        ok = ok && evaluateGermanAnswer(st.praeteritumInput || '', conjugations.praeteritum);
+      if (settings.verbs.praeteritum && hasPraet) {
+        ok = ok && evaluateGermanAnswer(st.praeteritumInput || '', item.praeteritum!);
       }
-      if (settings.verbs.perfekt) {
-        ok = ok && evaluateGermanAnswer(st.perfektInput || '', conjugations.perfekt, true);
+      if (settings.verbs.perfekt && hasPerf) {
+        ok = ok && evaluateGermanAnswer(st.perfektInput || '', item.perfekt!, true);
       }
       return ok;
     }
@@ -913,10 +932,13 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     const qState = answers[item.id] || {};
     if (qState.verbChecked) return;
 
-    const conjugations = getVerbConjugations(item);
-    const presOk = evaluateGermanAnswer(qState.present3rdInput || '', conjugations.present3rd);
-    const praetOk = evaluateGermanAnswer(qState.praeteritumInput || '', conjugations.praeteritum);
-    const perfOk = evaluateGermanAnswer(qState.perfektInput || '', conjugations.perfekt, true);
+    const hasPres = Boolean(item.present3rd && item.present3rd.trim());
+    const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
+    const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
+
+    const presOk = hasPres && settings.verbs.present3rd ? evaluateGermanAnswer(qState.present3rdInput || '', item.present3rd!) : true;
+    const praetOk = hasPraet && settings.verbs.praeteritum ? evaluateGermanAnswer(qState.praeteritumInput || '', item.praeteritum!) : true;
+    const perfOk = hasPerf && settings.verbs.perfekt ? evaluateGermanAnswer(qState.perfektInput || '', item.perfekt!, true) : true;
 
     updateAnswerField(item.id, {
       verbChecked: true
@@ -1198,10 +1220,12 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
             const verbCorr = sessionItems.filter(it => {
               const st = answers[it.id];
               if (!st?.verbChecked) return false;
-              const conjugations = getVerbConjugations(it);
-              const presOk = !settings.verbs.present3rd || evaluateGermanAnswer(st.present3rdInput || '', conjugations.present3rd);
-              const praetOk = !settings.verbs.praeteritum || evaluateGermanAnswer(st.praeteritumInput || '', conjugations.praeteritum);
-              const perfOk = !settings.verbs.perfekt || evaluateGermanAnswer(st.perfektInput || '', conjugations.perfekt, true);
+              const hasPres = Boolean(it.present3rd && it.present3rd.trim());
+              const hasPraet = Boolean(it.praeteritum && it.praeteritum.trim());
+              const hasPerf = Boolean(it.perfekt && it.perfekt.trim());
+              const presOk = !settings.verbs.present3rd || !hasPres || evaluateGermanAnswer(st.present3rdInput || '', it.present3rd!);
+              const praetOk = !settings.verbs.praeteritum || !hasPraet || evaluateGermanAnswer(st.praeteritumInput || '', it.praeteritum!);
+              const perfOk = !settings.verbs.perfekt || !hasPerf || evaluateGermanAnswer(st.perfektInput || '', it.perfekt!, true);
               return presOk && praetOk && perfOk;
             }).length;
 
@@ -1343,16 +1367,21 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                 const isOther = normType === 'others';
 
                 const liveMasteryScore = vocabList.find(v => v.id === item.id)?.masteryScore ?? item.masteryScore ?? 0;
-                const conjugations = getVerbConjugations(item);
 
-                const isArticleCorrect = qState.selectedArticle === item.gender;
-                const isPluralCorrect = item.plural
-                  ? evaluatePluralAnswer(qState.pluralInput || '', item.plural)
+                const hasPres = Boolean(item.present3rd && item.present3rd.trim());
+                const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
+                const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
+                const showVerbConjugations = isVerb && ((settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf));
+
+                const isArticleCorrect = item.gender ? qState.selectedArticle === item.gender : true;
+                const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
+                const isPluralCorrect = hasPlural
+                  ? evaluatePluralAnswer(qState.pluralInput || '', item.plural!)
                   : true;
 
-                const isPresCorrect = evaluateGermanAnswer(qState.present3rdInput || '', conjugations.present3rd);
-                const isPraetCorrect = evaluateGermanAnswer(qState.praeteritumInput || '', conjugations.praeteritum);
-                const isPerfCorrect = evaluateGermanAnswer(qState.perfektInput || '', conjugations.perfekt, true);
+                const isPresCorrect = hasPres ? evaluateGermanAnswer(qState.present3rdInput || '', item.present3rd!) : true;
+                const isPraetCorrect = hasPraet ? evaluateGermanAnswer(qState.praeteritumInput || '', item.praeteritum!) : true;
+                const isPerfCorrect = hasPerf ? evaluateGermanAnswer(qState.perfektInput || '', item.perfekt!, true) : true;
 
                 return (
                   <div
@@ -1599,7 +1628,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                         )}
 
                         {/* 3. Plural Input + "Check" button */}
-                        {settings.nouns.plural && (
+                        {settings.nouns.plural && hasPlural && (
                           <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                             <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
                               3. Enter Plural Form (Plural):
@@ -1711,14 +1740,14 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                         )}
 
                         {/* 2. Verb Conjugations */}
-                        {(settings.verbs.present3rd || settings.verbs.praeteritum || settings.verbs.perfekt) && (
+                        {showVerbConjugations && (
                           <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
                             <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
                               2. Verb Forms & Conjugations:
                             </span>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 dir-ltr">
                               {/* Present 3rd */}
-                              {settings.verbs.present3rd && (
+                              {settings.verbs.present3rd && hasPres && (
                                 <div className="space-y-1">
                                   <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
                                     Present (er/sie/es):
@@ -1739,14 +1768,14 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                                   />
                                   {qState.verbChecked && !isPresCorrect && (
                                     <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {conjugations.present3rd}
+                                      Correct: {item.present3rd}
                                     </span>
                                   )}
                                 </div>
                               )}
 
                               {/* Praeteritum */}
-                              {settings.verbs.praeteritum && (
+                              {settings.verbs.praeteritum && hasPraet && (
                                 <div className="space-y-1">
                                   <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
                                     Past (Präteritum):
@@ -1767,14 +1796,14 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                                   />
                                   {qState.verbChecked && !isPraetCorrect && (
                                     <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {conjugations.praeteritum}
+                                      Correct: {item.praeteritum}
                                     </span>
                                   )}
                                 </div>
                               )}
 
                               {/* Perfekt */}
-                              {settings.verbs.perfekt && (
+                              {settings.verbs.perfekt && hasPerf && (
                                 <div className="space-y-1">
                                   <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
                                     Perfect (Perfekt):
@@ -1795,7 +1824,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                                   />
                                   {qState.verbChecked && !isPerfCorrect && (
                                     <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {conjugations.perfekt}
+                                      Correct: {item.perfekt}
                                     </span>
                                   )}
                                 </div>

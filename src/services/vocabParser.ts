@@ -1,5 +1,5 @@
 import { VocabItem, VocabType, GrammaticalGender, GrammaticalCase, CefrLevel } from '../types';
-import { getVerbConjugations } from './germanConjugator';
+import { getVerbConjugations, checkIsIrregularVerb } from './germanConjugator';
 import * as XLSX from 'xlsx';
 
 export function parseExcelBuffer(buffer: ArrayBuffer): { items: VocabItem[]; plainText: string } {
@@ -168,13 +168,16 @@ export function parseVocabFile(fileContent: string, fileName: string): VocabItem
     }
   }
 
-  // Check if CSV format (file extension OR headers containing comma/tab OR matching table columns)
+  // Check if CSV format (file extension OR headers/lines containing delimiters or matching table columns)
   const trimmed = fileContent.trim();
   const firstLine = trimmed.split(/\r?\n/)[0] || '';
   const isCSV = extension === 'csv' ||
+    extension === 'tsv' ||
     firstLine.includes(',') ||
     firstLine.includes('\t') ||
-    /^(type|article|the word|word|german|kategorie|geschlecht|wort|nomen|verb|adjective)/i.test(firstLine);
+    firstLine.includes(';') ||
+    firstLine.includes('|') ||
+    /^(type|article|the word|word|german|kategorie|geschlecht|wort|nomen|noun|verb|adjective|expression|others)/i.test(firstLine);
 
   if (isCSV) {
     const csvParsed = parseCSVContent(fileContent);
@@ -418,10 +421,30 @@ export function parseTextOrCSV(content: string): VocabItem[] {
   const lines = content.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   const result: VocabItem[] = [];
 
+  // Check if content as a whole or line-by-line is delimited table data (e.g. pipe, tab, or comma separated)
+  const isDelimited = lines.some(l => l.split('|').length >= 3 || l.split('\t').length >= 3 || (l.split(';').length >= 3 && !l.includes('&#')) || l.split(',').length >= 4);
+  if (isDelimited) {
+    const tableParsed = parseCSVContent(content);
+    if (tableParsed.length > 0) {
+      return tableParsed;
+    }
+  }
+
   lines.forEach((line, index) => {
     // Skip header lines
-    if (index === 0 && (line.toLowerCase().includes('word') || line.toLowerCase().includes('german') || line.toLowerCase().includes('كلمة'))) {
+    if (index === 0 && (line.toLowerCase().includes('word') || line.toLowerCase().includes('german') || line.toLowerCase().includes('كلمة') || line.toLowerCase().includes('type|') || line.toLowerCase().includes('type,'))) {
       return;
+    }
+
+    // If single line has pipe or table delimiters, parse it as a row
+    if (line.split('|').length >= 3 || line.split('\t').length >= 3 || line.split(';').length >= 3 || line.split(',').length >= 4) {
+      const delim = line.includes('|') ? '|' : line.includes('\t') ? '\t' : line.includes(';') ? ';' : ',';
+      const cells = parseCSVLine(line, delim);
+      const parsedRows = parseGoogleSheetRows([cells]);
+      if (parsedRows.length > 0) {
+        result.push(...parsedRows);
+        return;
+      }
     }
 
     // 1. Extract Arabic Translation if present in line
@@ -510,9 +533,14 @@ export function parseTextOrCSV(content: string): VocabItem[] {
     }
 
     // Fallback translation if empty
+    let translationEn: string | undefined = undefined;
     if (!translationAr) {
       if (parts.length > 1 && !/[\{\}\"]/.test(parts[1])) {
-        translationAr = parts[1].replace(/^(die|der|das)\s+/, '').trim();
+        const candidateTrans = parts[1].replace(/^(die|der|das)\s+/, '').trim();
+        if (candidateTrans && candidateTrans.toLowerCase() !== mainWord.toLowerCase()) {
+          translationEn = candidateTrans;
+          translationAr = candidateTrans;
+        }
       }
       if (!translationAr) {
         translationAr = type === 'noun' ? mainWord : `فعل (${mainWord})`;
@@ -520,11 +548,22 @@ export function parseTextOrCSV(content: string): VocabItem[] {
     }
 
     // Build Example Sentences
-    let exampleDe = `${mainWord} ist مهم.`;
+    let exampleDe = `${mainWord} ist wichtig.`;
+    let present3rd: string | undefined = undefined;
+    let praeteritum: string | undefined = undefined;
+    let perfekt: string | undefined = undefined;
+    let isIrregular: boolean | undefined = undefined;
+
     if (type === 'noun') {
       exampleDe = `${gender || 'der'} ${mainWord} ist hier.`;
     } else if (type === 'verb') {
       exampleDe = `Ich ${mainWord.endsWith('en') ? mainWord.slice(0, -2) + 'e' : mainWord} gerne.`;
+      const isIrreg = checkIsIrregularVerb(mainWord);
+      isIrregular = isIrreg;
+      const conj = getVerbConjugations(mainWord);
+      present3rd = conj.present3rd;
+      praeteritum = conj.praeteritum;
+      perfekt = conj.perfekt;
     }
 
     result.push({
@@ -533,9 +572,14 @@ export function parseTextOrCSV(content: string): VocabItem[] {
       type,
       gender: type === 'noun' ? gender : undefined,
       plural: type === 'noun' ? plural : undefined,
+      isIrregular: type === 'verb' ? isIrregular : undefined,
+      present3rd: type === 'verb' ? present3rd : undefined,
+      praeteritum: type === 'verb' ? praeteritum : undefined,
+      perfekt: type === 'verb' ? perfekt : undefined,
       translationAr,
+      translationEn: translationEn || undefined,
       level: 'A1',
-      category: 'استيراد تلقائي',
+      category: 'General',
       exampleDe,
       exampleAr: translationAr,
       masteryScore: 0,
@@ -571,7 +615,8 @@ export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
     if (item.type === 'noun') return 1;
     if (item.type === 'verb') return 2;
     if (item.type === 'adjective') return 3;
-    return 4;
+    if (item.type === 'expression') return 4;
+    return 5;
   };
 
   const sortedItems = [...items].sort((a, b) => {
@@ -582,19 +627,21 @@ export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
   });
 
   const rows = sortedItems.map(item => {
-    const isIrregularVerb = item.type === 'verb' && item.isIrregular;
+    const isIrregularVerb = item.type === 'verb' && checkIsIrregularVerb(item);
     const typeStr = item.type === 'noun'
       ? 'Noun'
       : item.type === 'verb'
       ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
       : item.type === 'adjective'
       ? 'Adjective'
+      : item.type === 'expression'
+      ? 'Expression'
       : 'Others';
 
     const articleStr = item.type === 'noun' ? (item.gender || '') : '';
     const wordStr = item.word || '';
     const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
-    const regIrregStr = item.isIrregular ? 'irregular' : (item.type === 'verb' ? 'regular' : '');
+    const regIrregStr = item.type === 'verb' ? (checkIsIrregularVerb(item) ? 'irregular' : 'regular') : '';
 
     let conjugationStr = '';
     if (item.type === 'verb') {
@@ -662,7 +709,8 @@ export function exportVocabToCSV(items: VocabItem[]): string {
     if (item.type === 'noun') return 1;
     if (item.type === 'verb') return 2;
     if (item.type === 'adjective') return 3;
-    return 4;
+    if (item.type === 'expression') return 4;
+    return 5;
   };
 
   const sortedItems = [...items].sort((a, b) => {
@@ -673,19 +721,21 @@ export function exportVocabToCSV(items: VocabItem[]): string {
   });
 
   const rows = sortedItems.map(item => {
-    const isIrregularVerb = item.type === 'verb' && item.isIrregular;
+    const isIrregularVerb = item.type === 'verb' && checkIsIrregularVerb(item);
     const typeStr = item.type === 'noun'
       ? 'Noun'
       : item.type === 'verb'
       ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
       : item.type === 'adjective'
       ? 'Adjective'
+      : item.type === 'expression'
+      ? 'Expression'
       : 'Others';
 
     const articleStr = item.type === 'noun' ? (item.gender || '') : '';
     const wordStr = item.word || '';
     const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
-    const regIrregStr = item.isIrregular ? 'irregular' : (item.type === 'verb' ? 'regular' : '');
+    const regIrregStr = item.type === 'verb' ? (checkIsIrregularVerb(item) ? 'irregular' : 'regular') : '';
 
     let conjugationStr = '';
     if (item.type === 'verb') {
@@ -846,7 +896,6 @@ export function parseRowContentHeuristic(row: string[], rowIdx: number = 0): Voc
     cleanWord = leadingArt[2].trim();
   }
 
-  const isIrregular = rawType.toLowerCase().includes('irregular') || rawType.toLowerCase().includes('شاذ');
   const type: VocabType = rawType
     ? determineType(rawType, cleanWord, gender)
     : (gender || /^[A-ZÄÖÜ]/.test(cleanWord) ? 'noun' : determineType('', cleanWord, gender));
@@ -877,6 +926,24 @@ export function parseRowContentHeuristic(row: string[], rowIdx: number = 0): Voc
     }
   }
 
+  let isIrregular: boolean | undefined = undefined;
+  if (type === 'verb') {
+    const rawTypeLower = rawType.toLowerCase();
+    const isExplicitIrreg = rawTypeLower.includes('irregular') || rawTypeLower.includes('شاذ');
+    const isExplicitReg = rawTypeLower.includes('regular') || rawTypeLower.includes('عادي');
+    if (isExplicitIrreg) {
+      isIrregular = true;
+    } else if (isExplicitReg) {
+      isIrregular = false;
+    } else {
+      isIrregular = checkIsIrregularVerb({ word: cleanWord, present3rd, praeteritum, perfekt });
+    }
+  }
+
+  const isAr = /[\u0600-\u06FF]/.test(translationAr);
+  const finalTranslationEn = translationEn || (!isAr && translationAr ? translationAr : undefined);
+  const finalTranslationAr = translationAr || translationEn || 'بدون ترجمة';
+
   return {
     id: `custom_${Date.now()}_${rowIdx}_${Math.random().toString(36).substr(2, 4)}`,
     word: cleanWord,
@@ -888,8 +955,8 @@ export function parseRowContentHeuristic(row: string[], rowIdx: number = 0): Voc
     praeteritum,
     perfekt,
     antonym: rawAntonym || undefined,
-    translationEn: translationEn || undefined,
-    translationAr: translationAr || 'بدون ترجمة',
+    translationEn: finalTranslationEn || undefined,
+    translationAr: finalTranslationAr,
     exampleDe: exampleDe || undefined,
     level: level || 'A1',
     category: 'Allgemein',
@@ -944,7 +1011,11 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
       else if (c === 'preposition' || c.includes('حرف الجر') || c === 'prep') prepositionIdx = idx;
       else if (c === 'case' || c.includes('preposition_case') || c.includes('preposition case') || c.includes('الحالة الإعرابية') || c.includes('الحالة') || c === 'prepositioncase' || c === 'prepcase') prepositionCaseIdx = idx;
       else if (c === 'antonym' || c.includes('opposite') || c.includes('gegenteil') || c.includes('ضد') || c.includes('عكس')) antonymIdx = idx;
-      else if (c === 'en_translation' || c === 'en translation' || c === 'en' || c === 'translation' || c.includes('english') || c.includes('meaning') || c.includes('ترجمة')) translationIdx = idx;
+      else if (
+        c === 'en_translation' || c === 'en translation' || c === 'en' || c === 'translation' ||
+        c === 'meaning' || c === 'meanings' || c === 'bedeutung' || c === 'ar_translation' ||
+        c.includes('english') || c.includes('meaning') || c.includes('ترجمة') || c.includes('معنى') || c.includes('bedeutung')
+      ) translationIdx = idx;
       else if (c.includes('example') || c.includes('beispiel') || c.includes('مثال') || c.includes('جملة')) exampleIdx = idx;
       else if (c.includes('cefr') || c === 'level' || c.includes('مستوى') || c === 'stufe') levelIdx = idx;
     });
@@ -988,6 +1059,8 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
       l === 'antonym' ||
       l === 'en_translation' ||
       l === 'en translation' ||
+      l === 'meaning' ||
+      l === 'translation' ||
       l === 'example' ||
       l === 'cefr level' ||
       l === 'نوع' ||
@@ -1000,7 +1073,18 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
   dataRows.forEach((row, rowIdx) => {
     if (!row || row.every(cell => !cell || !cell.trim())) return;
 
-    if (isStrict10Column && row.length >= 3) {
+    // Check if row matches standard 12-column or strict layout
+    const isStandardRow = isStrict10Column || (
+      row.length >= 10 &&
+      !isHeaderString(row[wordIdx] || '') &&
+      (
+        row.length >= 11 ||
+        /^(noun|verb|adjective|expression|others|nomen|verben|adjektiv)$/i.test(row[0]?.trim()) ||
+        ['der', 'die', 'das', ''].includes(row[1]?.trim().toLowerCase())
+      )
+    );
+
+    if (isStandardRow && row.length >= 3) {
       const getVal = (idx: number) => (idx !== -1 && idx < row.length ? row[idx]?.trim() : '');
       const rawWord = getVal(wordIdx);
       if (rawWord && !isHeaderString(rawWord)) {
@@ -1031,7 +1115,6 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
 
         const lowerType = rawType.toLowerCase();
         const lowerRegIrreg = rawRegIrreg.toLowerCase();
-        const isIrregular = lowerType.includes('irregular') || lowerRegIrreg.includes('irregular') || lowerRegIrreg.includes('شاذ');
         const type: VocabType = rawType
           ? determineType(rawType, cleanWord, gender)
           : (gender || /^[A-ZÄÖÜ]/.test(cleanWord) ? 'noun' : determineType('', cleanWord, gender));
@@ -1053,7 +1136,23 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
           }
         }
 
-        const isAr = /[\u0600-\u06FF]/.test(rawTranslation);
+        let isIrregular: boolean | undefined = undefined;
+        if (type === 'verb') {
+          const isExplicitIrreg = lowerType.includes('irregular') || lowerRegIrreg.includes('irregular') || lowerRegIrreg.includes('شاذ');
+          const isExplicitReg = lowerRegIrreg.includes('regular') || lowerRegIrreg.includes('عادي');
+          if (isExplicitIrreg) {
+            isIrregular = true;
+          } else if (isExplicitReg) {
+            isIrregular = false;
+          } else {
+            isIrregular = checkIsIrregularVerb({ word: cleanWord, present3rd, praeteritum, perfekt });
+          }
+        }
+
+        const rawMeaning = (rawTranslation || '').trim();
+        const isAr = /[\u0600-\u06FF]/.test(rawMeaning);
+        const translationEn = rawMeaning || undefined;
+        const translationAr = rawMeaning || 'بدون ترجمة';
 
         vocabItems.push({
           id: `gs_${Date.now()}_${rowIdx}`,
@@ -1068,8 +1167,8 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
           antonym: rawAntonym || undefined,
           preposition: rawPreposition || undefined,
           prepositionCase: (['Akkusativ', 'Dativ', 'Genitiv', 'Wechsel'].includes(rawPrepositionCase || '') ? rawPrepositionCase : undefined) as GrammaticalCase | undefined,
-          translationEn: !isAr ? rawTranslation : undefined,
-          translationAr: isAr ? rawTranslation : (rawTranslation || 'بدون ترجمة'),
+          translationEn: translationEn || undefined,
+          translationAr: translationAr,
           exampleDe: rawExample || undefined,
           level: (/^(A1|A2|B1|B2|C1|C2)$/i.test(rawLevel.trim()) ? rawLevel.trim().toUpperCase() : 'A1') as CefrLevel,
           category: 'Allgemein',

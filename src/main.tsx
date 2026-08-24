@@ -4,11 +4,14 @@ import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 
-// Register PWA service worker for offline support & caching
-registerSW({ immediate: true });
+// Register PWA service worker for offline support & caching in production
+if ('serviceWorker' in navigator && !import.meta.env.DEV) {
+  registerSW({ immediate: true });
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
   </StrictMode>,
 );
+

@@ -398,7 +398,11 @@ export function checkIsIrregularVerb(item: Partial<VocabItem> | string): boolean
     return false;
   }
 
-  if (item.isIrregular === true) return true;
+  // If user or item explicitly defines isIrregular (true or false), strictly honor it
+  if (typeof item.isIrregular === 'boolean') {
+    return item.isIrregular;
+  }
+
   if (!item.word) return false;
 
   const w = item.word.trim().toLowerCase();

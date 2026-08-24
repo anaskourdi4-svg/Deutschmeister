@@ -43,7 +43,9 @@ import {
   PenTool,
   FileText,
   Pencil,
-  ArrowLeftRight
+  ArrowLeftRight,
+  MoreVertical,
+  Star
 } from 'lucide-react';
 import { getVerbConjugations, sanitizeConjugationWord, checkIsIrregularVerb } from '../services/germanConjugator';
 
@@ -161,6 +163,7 @@ interface VocabCardProps {
   idx: number;
   onEdit?: (item: VocabItem) => void;
   onDeleteSingle: (id: string) => void;
+  onToggleStar?: (item: VocabItem) => void;
 }
 
 const VocabCard: React.FC<VocabCardProps> = ({
@@ -168,7 +171,22 @@ const VocabCard: React.FC<VocabCardProps> = ({
   idx,
   onEdit,
   onDeleteSingle,
+  onToggleStar,
 }) => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMenuOpen]);
+
   const itemType = getItemType(item);
   const cleanPlural = itemType === 'noun' ? cleanPluralText(item.plural) : '';
   const nounArticle = itemType === 'noun' ? (item.gender || inferGender(item.word)) : undefined;
@@ -265,26 +283,76 @@ const VocabCard: React.FC<VocabCardProps> = ({
           </span>
         </div>
 
-        {/* Actions (Edit & Delete) */}
+        {/* Actions (Star Button & 3-Dots Vertical Menu) */}
         <div className="flex items-center gap-1">
-          {onEdit && (
-            <button
-              type="button"
-              onClick={() => onEdit(item)}
-              className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
-              title="تعديل الكلمة / Edit Word"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-          )}
+          {/* Star Toggle Button - Pure icon without border box */}
           <button
             type="button"
-            onClick={() => onDeleteSingle(item.id)}
-            className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
-            title="Delete Word"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleStar?.(item);
+            }}
+            className="p-1 rounded-lg transition-transform cursor-pointer hover:scale-110 active:scale-125"
+            title={item.isStarred ? 'إلغاء التمييز / Remove Star' : 'تمييز المفردة بنجمة / Star Word'}
+            aria-label="Star word"
           >
-            <Trash2 className="w-4 h-4" />
+            <Star
+              className={`w-5 h-5 transition-colors ${
+                item.isStarred
+                  ? 'fill-amber-400 text-amber-400 drop-shadow-xs'
+                  : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'
+              }`}
+            />
           </button>
+
+          {/* 3-Dots Vertical Menu */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMenuOpen(prev => !prev);
+              }}
+              className={`p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
+                isMenuOpen ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200' : ''
+              }`}
+              title="خيارات المفردة / Word Options"
+              aria-label="More options"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+
+            {isMenuOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-36 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-1.5 z-30 animate-fade-in text-xs space-y-0.5">
+                {onEdit && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsMenuOpen(false);
+                      onEdit(item);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer font-bold rounded-xl"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Edit Word</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMenuOpen(false);
+                    onDeleteSingle(item.id);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer font-bold rounded-xl"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Word</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -388,7 +456,12 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
   const [present3rd, setPresent3rd] = useState<string>(item.present3rd || '');
   const [praeteritum, setPraeteritum] = useState<string>(item.praeteritum || '');
   const [perfekt, setPerfekt] = useState<string>(item.perfekt || '');
-  const [isIrregular, setIsIrregular] = useState<boolean>(!!item.isIrregular);
+  const [isIrregular, setIsIrregular] = useState<boolean>(() => {
+    if (typeof item.isIrregular === 'boolean') {
+      return item.isIrregular;
+    }
+    return checkIsIrregularVerb(item);
+  });
 
   // Adjective fields
   const [antonym, setAntonym] = useState<string>(item.antonym || '');
@@ -787,6 +860,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategoryTab, setActiveCategoryTab] = useState<MainCategoryTab>(null);
   const [activeLevelTab, setActiveLevelTab] = useState<CefrLevel | null>(null);
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   
   // Edit Word Modal state
   const [editingItem, setEditingItem] = useState<VocabItem | null>(null);
@@ -990,6 +1064,13 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     };
     const handleOpenImport = () => {
       setIsUploadOpen(true);
+      setShowImportInfo(false);
+      setFileText('');
+      setManualInputText('');
+      setUploadedFileName('');
+      setAiBulkParsedItems(null);
+      setExcelParsedItems(null);
+      setOmittedDuplicateCount(0);
     };
     const handleExportSheet = () => {
       handleExportExcel();
@@ -1012,6 +1093,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
   const adjectiveCount = vocabList.filter(v => getItemType(v) === 'adjective').length;
   const expressionCount = vocabList.filter(v => getItemType(v) === 'expression').length;
   const othersCount = vocabList.filter(v => getItemType(v) === 'Others').length;
+  const starredCount = vocabList.filter(v => !!v.isStarred).length;
 
   // CEFR Level counts
   const levelCounts: Record<CefrLevel, number> = {
@@ -1056,7 +1138,12 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       matchesLevel = (item.level || 'A1').toUpperCase() === activeLevelTab;
     }
 
-    return matchesSearch && matchesCategory && matchesLevel;
+    let matchesStarred = true;
+    if (showStarredOnly) {
+      matchesStarred = !!item.isStarred;
+    }
+
+    return matchesSearch && matchesCategory && matchesLevel && matchesStarred;
   });
 
   const filteredVocab = [...rawFilteredVocab].sort((a, b) => {
@@ -1069,6 +1156,13 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     // Default: 'alphabetical'
     return a.word.localeCompare(b.word, 'de', { sensitivity: 'base' });
   });
+
+  const handleToggleStar = (item: VocabItem) => {
+    const updated = { ...item, isStarred: !item.isStarred };
+    if (onUpdateVocabItem) {
+      onUpdateVocabItem(updated);
+    }
+  };
 
   const handleDeleteSingleVocabItem = (id: string) => {
     const item = vocabList.find(v => v.id === id);
@@ -1260,9 +1354,12 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
     showToast(`تم إضافة ${aiBulkParsedItems.length} مفردة جديدة بنجاح!`);
 
     setIsUploadOpen(false);
+    setShowImportInfo(false);
     setFileText('');
+    setManualInputText('');
     setUploadedFileName('');
     setAiBulkParsedItems(null);
+    setExcelParsedItems(null);
     setOmittedDuplicateCount(0);
   };
 
@@ -1507,38 +1604,41 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-2">
         
         {/* LINE 1: Single row with Expandable Filter button, Result Count, and Reset Filter button */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap">
           
-          {/* Expandable Filter Button with Down Arrow */}
-          <button
-            type="button"
-            onClick={() => setIsFilterOpen(prev => !prev)}
-            className={`px-4 py-2 rounded-2xl font-black text-xs flex items-center gap-2 cursor-pointer transition-all border shadow-2xs ${
-              isFilterOpen || activeCategoryTab || activeLevelTab
-                ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700'
-            }`}
-          >
-            <Filter className="w-4 h-4" />
-            <span>Filter Menu</span>
-            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isFilterOpen ? 'rotate-180' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Expandable Filter Button with Down Arrow */}
+            <button
+              type="button"
+              onClick={() => setIsFilterOpen(prev => !prev)}
+              className={`px-4 py-2 rounded-2xl font-black text-xs flex items-center gap-2 cursor-pointer transition-all border shadow-2xs ${
+                isFilterOpen || activeCategoryTab || activeLevelTab || showStarredOnly
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-slate-50 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              <Filter className="w-4 h-4" />
+              <span>Filter Menu</span>
+              <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isFilterOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
 
           {/* Right Side: Result Count Badge & Reset/Cancel Filter Button */}
           <div className="flex items-center gap-2">
             <span className="px-3 py-1.5 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-black flex items-center gap-1.5">
-              <span>{(activeCategoryTab || activeLevelTab || searchQuery) ? 'Results:' : 'Total Words:'}</span>
+              <span>{(activeCategoryTab || activeLevelTab || showStarredOnly || searchQuery) ? 'Results:' : 'Total Words:'}</span>
               <span className="text-blue-600 dark:text-blue-400 font-extrabold">
-                {(activeCategoryTab || activeLevelTab || searchQuery) ? filteredVocab.length : vocabList.length}
+                {(activeCategoryTab || activeLevelTab || showStarredOnly || searchQuery) ? filteredVocab.length : vocabList.length}
               </span>
             </span>
 
-            {(activeCategoryTab || activeLevelTab) ? (
+            {(activeCategoryTab || activeLevelTab || showStarredOnly) ? (
               <button
                 type="button"
                 onClick={() => {
                   setActiveCategoryTab(null);
                   setActiveLevelTab(null);
+                  setShowStarredOnly(false);
                 }}
                 className="p-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 rounded-2xl cursor-pointer transition-all flex items-center justify-center shadow-2xs"
                 title="Clear Filters"
@@ -1551,9 +1651,24 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
         </div>
 
         {/* LINE 2: Active Filters Tag Chips (Appears on line 2 if filters are active) */}
-        {(activeCategoryTab || activeLevelTab) && (
+        {(activeCategoryTab || activeLevelTab || showStarredOnly) && (
           <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap">
             <span className="text-[11px] font-bold text-slate-400">Active Filters:</span>
+            
+            {showStarredOnly && (
+              <span className="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 text-xs font-black flex items-center gap-1.5 border border-amber-300 dark:border-amber-800">
+                <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                <span>Starred ({starredCount})</span>
+                <button
+                  type="button"
+                  onClick={() => setShowStarredOnly(false)}
+                  className="hover:text-amber-700 cursor-pointer text-xs"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
             {activeCategoryTab && (
               <span className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1.5 border ${
                 activeCategoryTab === 'noun'
@@ -1596,8 +1711,8 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
         {isFilterOpen && (
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3 animate-in fade-in duration-150">
             
-            {/* 1. Word Type Selection */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {/* 1. Word Type Selection with Starred as the last option */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               <button
                 type="button"
                 onClick={() => setActiveCategoryTab(prev => prev === 'noun' ? null : 'noun')}
@@ -1680,6 +1795,27 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                   activeCategoryTab === 'Others' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-300'
                 }`}>
                   {othersCount}
+                </span>
+              </button>
+
+              {/* Starred filter option as the last button */}
+              <button
+                type="button"
+                onClick={() => setShowStarredOnly(prev => !prev)}
+                className={`px-3 py-2 rounded-2xl font-black text-xs transition-all cursor-pointer flex items-center justify-between gap-1 border ${
+                  showStarredOnly
+                    ? 'bg-amber-400 text-amber-950 border-amber-400 shadow-2xs font-extrabold'
+                    : 'bg-slate-50 text-slate-700 hover:bg-amber-50 dark:bg-slate-800/40 dark:text-slate-300 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Star className={`w-3.5 h-3.5 shrink-0 ${showStarredOnly ? 'fill-amber-950 text-amber-950' : 'fill-amber-400 text-amber-400'}`} />
+                  <span className="truncate">Starred</span>
+                </div>
+                <span className={`px-1.5 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
+                  showStarredOnly ? 'bg-amber-500 text-amber-950' : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+                }`}>
+                  {starredCount}
                 </span>
               </button>
             </div>
@@ -1778,6 +1914,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
               idx={idx}
               onEdit={(itemToEdit) => setEditingItem(itemToEdit)}
               onDeleteSingle={handleDeleteSingleVocabItem}
+              onToggleStar={handleToggleStar}
             />
           ))}
         </div>
@@ -2222,19 +2359,23 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-xl w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <FolderUp className="w-5 h-5 text-blue-600" />
-                <span>Import Vocabulary</span>
-              </h3>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Import Vocabulary
+                </h3>
+              </div>
 
               <button
                 onClick={() => {
                   setIsUploadOpen(false);
+                  setShowImportInfo(false);
                   setAiBulkParsedItems(null);
                   setExcelParsedItems(null);
                   setUploadedFileName('');
                   setFileText('');
                   setManualInputText('');
+                  setOmittedDuplicateCount(0);
                 }}
                 className="text-slate-400 hover:text-slate-600 text-xs font-bold p-1 cursor-pointer"
               >
@@ -2280,13 +2421,13 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                         Select vocabulary file (.xlsx, .xls, .csv, .txt, .json):
                       </label>
 
-                      <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-400 bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-all group">
+                      <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-400 bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all group">
                         <FileSpreadsheet className="w-8 h-8 text-blue-500 group-hover:scale-110 transition-transform mb-2" />
                         <span className="text-xs font-black text-slate-800 dark:text-slate-200">
                           Click to select Excel or CSV file
                         </span>
                         <span className="text-[11px] font-bold text-slate-400 mt-1">
-                          Standard 12-column format supported (Type | Article | Word | Plural | regular/irregular | Conjugation | Preposition | Case | Antonym | EN_translation | Example | CEFR level)
+                          .xlsx, .xls, .csv, .txt, .json
                         </span>
                         <input
                           type="file"
@@ -2328,24 +2469,33 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                 ) : (
                   /* Paste CSV Code Textarea Area */
                   <div className="space-y-3 animate-fade-in">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block">
-                        Paste CSV code or vocabulary lines here:
-                      </label>
-                    </div>
+                    <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block">
+                      Paste CSV code or vocabulary lines here:
+                    </label>
 
-                    <textarea
-                      rows={7}
-                      value={manualInputText}
-                      onChange={e => setManualInputText(e.target.value)}
-                      placeholder=""
-                      className="w-full p-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr"
-                    />
+                    <div className="relative group">
+                      <textarea
+                        rows={7}
+                        value={manualInputText}
+                        onChange={e => setManualInputText(e.target.value)}
+                        className="w-full p-3.5 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-white rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dir-ltr min-h-[170px]"
+                      />
+                      {!manualInputText && (
+                        <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center text-center p-4">
+                          <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-2 shadow-xs group-hover:scale-105 transition-transform">
+                            <FileSpreadsheet className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+                          </div>
+                          <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400">
+                            Paste csv code seperated by (|)
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {/* Direct Table / CSV Import Button */}
-                <div className="pt-2">
+                <div className="pt-1">
                   <button
                     type="button"
                     onClick={handleProcessAndImportSpreadsheet}
@@ -2354,6 +2504,37 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                   >
                     <span>Preview & Import</span>
                   </button>
+                </div>
+
+                {/* Single Format info section at the end of the modal */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowImportInfo(prev => !prev)}
+                    className={`w-full py-2 px-3.5 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border ${
+                      showImportInfo
+                        ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                        : 'bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                      <span>Format info & column guide (12-Column Format)</span>
+                    </span>
+                    <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${showImportInfo ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Collapsible Format Information Banner */}
+                  {showImportInfo && (
+                    <div className="mt-2 p-3.5 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-2xl space-y-2 animate-fade-in text-xs">
+                      <div className="font-mono text-[11px] bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-blue-100 dark:border-blue-900 text-slate-700 dark:text-slate-300 dir-ltr overflow-x-auto">
+                        Type | Article | Word | Plural | regular/irregular | Conjugation | Preposition | Case | Antonym | EN_translation | Example | CEFR level
+                      </div>
+                      <p className="text-[11px] text-blue-800 dark:text-blue-300 font-bold leading-relaxed">
+                        Supports Excel (.xlsx, .xls), CSV, TSV, and plain text formats with pipe (<code className="font-mono bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded">|</code>), comma (<code className="font-mono bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded">,</code>), semicolon (<code className="font-mono bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded">;</code>), or tab (<code className="font-mono bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded">\t</code>) delimiters.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

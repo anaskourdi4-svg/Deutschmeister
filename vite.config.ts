@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
-    base: '/Deutschmeister/',
+    base: './',
     plugins: [
       react(),
       tailwindcss(),
@@ -81,7 +81,7 @@ export default defineConfig(() => {
           clientsClaim: true,
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
         },
       }),
     ],

@@ -251,6 +251,12 @@ export default function App() {
     );
   };
 
+  const handleMoveVocabSet = (id: string, targetGroup: string) => {
+    setVocabSets(prev =>
+      prev.map(set => (set.id === id ? { ...set, levelGroup: targetGroup } : set))
+    );
+  };
+
   const handleDeleteVocabSet = (id: string) => {
     const remaining = vocabSets.filter(set => set.id !== id);
     if (remaining.length === 0) {
@@ -390,6 +396,7 @@ export default function App() {
             onSelectVocabSet={setActiveSetId}
             onCreateVocabSet={handleCreateVocabSet}
             onRenameVocabSet={handleRenameVocabSet}
+            onMoveVocabSet={handleMoveVocabSet}
             onDeleteVocabSet={handleDeleteVocabSet}
             onBatchImportSets={handleBatchImportSets}
             onExportAllSets={handleExportAllSets}
