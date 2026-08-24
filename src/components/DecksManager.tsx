@@ -701,6 +701,20 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                     type="button"
                                     onClick={() => {
                                       setOpenMenuSetId(null);
+                                      setEditingSetId(set.id);
+                                      setEditingName(set.name);
+                                      setDeletingSetId(null);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                  >
+                                    <Edit3 className="w-4 h-4 text-blue-500 shrink-0" />
+                                    <span>تعديل الاسم (Rename)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuSetId(null);
                                       setMovingDeck(set);
                                       setTargetMoveGroup(getDeckGroup(set));
                                     }}
@@ -720,6 +734,21 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                   >
                                     <Download className="w-4 h-4 text-slate-400 shrink-0" />
                                     <span>تصدير (Export JSON)</span>
+                                  </button>
+
+                                  <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuSetId(null);
+                                      setDeletingSetId(set.id);
+                                      setEditingSetId(null);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+                                    <span>حذف الـ Deck (Delete)</span>
                                   </button>
                                 </div>
                               )}
@@ -1100,6 +1129,20 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                   type="button"
                                   onClick={() => {
                                     setOpenMenuSetId(null);
+                                    setEditingSetId(set.id);
+                                    setEditingName(set.name);
+                                    setDeletingSetId(null);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                >
+                                  <Edit3 className="w-4 h-4 text-blue-500 shrink-0" />
+                                  <span>تعديل الاسم (Rename)</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSetId(null);
                                     setMovingDeck(set);
                                     setTargetMoveGroup(getDeckGroup(set));
                                   }}
@@ -1119,6 +1162,21 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                 >
                                   <Download className="w-4 h-4 text-slate-400 shrink-0" />
                                   <span>تصدير (Export JSON)</span>
+                                </button>
+
+                                <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSetId(null);
+                                    setDeletingSetId(set.id);
+                                    setEditingSetId(null);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 flex items-center gap-2.5 cursor-pointer transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+                                  <span>حذف الـ Deck (Delete)</span>
                                 </button>
                               </div>
                             )}
