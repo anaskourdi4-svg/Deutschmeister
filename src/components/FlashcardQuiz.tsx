@@ -926,68 +926,26 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     };
   };
 
-  // Helper to record sub-check results per card attempt
+  // Helper to record sub-check results per card attempt with proportional scoring
   const recordSubCheckResult = (
     item: VocabItem,
     isCheckCorrect: boolean,
-    positiveDelta: number = 15,
-    negativeDelta: number = -10
+    positiveDelta: number = 12,
+    negativeDelta: number = -6
   ) => {
     const qState = answers[item.id] || {};
     const attemptLogged = !!qState.attemptLogged;
-    const wasEverWrong = !!qState.wasEverWrong;
+    const isNewAttempt = !attemptLogged;
 
-    let delta = 0;
-    let isNewAttempt = false;
-    let correctDelta = 0;
-    let newWasEverWrong = wasEverWrong;
-
-    if (!attemptLogged) {
-      // First sub-check on this card
-      isNewAttempt = true;
-      if (isCheckCorrect) {
-        delta = positiveDelta;
-        correctDelta = 1;
-        newWasEverWrong = false;
-      } else {
-        delta = negativeDelta;
-        correctDelta = 0;
-        newWasEverWrong = true;
-      }
-    } else {
-      // Attempt was already logged for this card
-      isNewAttempt = false;
-      if (!isCheckCorrect) {
-        if (!wasEverWrong) {
-          // First error on this card after a previously correct sub-check
-          correctDelta = -1; // revert previous correct credit
-          delta = negativeDelta - positiveDelta;
-          newWasEverWrong = true;
-        } else {
-          // Already logged as wrong previously on this card -> no extra attempt or error penalty
-          correctDelta = 0;
-          delta = 0;
-        }
-      } else {
-        // Correct sub-check on an already logged card
-        if (!wasEverWrong) {
-          correctDelta = 0; // already credited as correct
-          delta = 5; // small mastery bonus for completing another sub-check
-        } else {
-          correctDelta = 0; // cannot make card completely correct if an error occurred earlier
-          delta = 0;
-        }
-      }
-    }
+    // Direct proportional delta: correct answer adds points, incorrect subtracts a balanced penalty
+    const delta = isCheckCorrect ? positiveDelta : negativeDelta;
+    const correctDelta = isCheckCorrect ? 1 : 0;
 
     updateAnswerField(item.id, {
       attemptLogged: true,
-      wasEverWrong: newWasEverWrong
     });
 
-    const resetReviewErrors = isCheckCorrect && !newWasEverWrong;
-
-    onUpdateVocabMastery(item.id, delta, { isNewAttempt, correctDelta, resetReviewErrors });
+    onUpdateVocabMastery(item.id, delta, { isNewAttempt, correctDelta });
   };
 
   // 1. INSTANT ARTICLE CHECK: Card stays completely stationary
@@ -1002,7 +960,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       articleChecked: true
     });
 
-    recordSubCheckResult(item, isCorrect, 15, -10);
+    recordSubCheckResult(item, isCorrect, 12, -6);
   };
 
   // 2. PLURAL CHECK
@@ -1019,10 +977,10 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       pluralChecked: true
     });
 
-    recordSubCheckResult(item, isCorrect, 15, -10);
+    recordSubCheckResult(item, isCorrect, 12, -6);
   };
 
-  // 3. VERB CONJUGATIONS CHECK (Points awarded separately for each correct tense)
+  // 3. VERB CONJUGATIONS CHECK (Points awarded separately & proportionally for each correct tense)
   const handleVerbCheck = (item: VocabItem) => {
     const qState = answers[item.id] || {};
     if (qState.verbChecked) return;
@@ -1039,8 +997,33 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       verbChecked: true
     });
 
-    const isAllCorrect = presOk && praetOk && perfOk;
-    recordSubCheckResult(item, isAllCorrect, 20, -10);
+    let correctCount = 0;
+    let wrongCount = 0;
+
+    if (settings.verbs.present3rd && hasPres) {
+      if (presOk) correctCount++;
+      else wrongCount++;
+    }
+    if (settings.verbs.praeteritum && hasPraet) {
+      if (praetOk) correctCount++;
+      else wrongCount++;
+    }
+    if (settings.verbs.perfekt && hasPerf) {
+      if (perfOk) correctCount++;
+      else wrongCount++;
+    }
+
+    const totalTenses = correctCount + wrongCount;
+    if (totalTenses > 0) {
+      // Proportional: +6 per correct tense, -3 per wrong tense
+      const delta = (correctCount * 6) - (wrongCount * 3);
+      const isAllCorrect = wrongCount === 0;
+      const attemptLogged = !!qState.attemptLogged;
+      const isNewAttempt = !attemptLogged;
+
+      updateAnswerField(item.id, { attemptLogged: true });
+      onUpdateVocabMastery(item.id, delta, { isNewAttempt, correctDelta: isAllCorrect ? 1 : 0 });
+    }
   };
 
   // 4. ADJECTIVE ANTONYM CHECK
@@ -1056,7 +1039,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       antonymChecked: true
     });
 
-    recordSubCheckResult(item, isCorrect, 15, -10);
+    recordSubCheckResult(item, isCorrect, 12, -6);
   };
 
   // 5. TRANSLATION CHECK
@@ -1072,7 +1055,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       translationChecked: true
     });
 
-    recordSubCheckResult(item, isCorrect, 15, -10);
+    recordSubCheckResult(item, isCorrect, 12, -6);
   };
 
   // 6. SENTENCE COMPLETION (PREPOSITION & CASE) CHECK
@@ -1087,18 +1070,27 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       (fullPhrase ? evaluateGermanAnswer(inputVal, fullPhrase) : false) ||
       (fullPhrase ? inputVal.toLowerCase() === fullPhrase.toLowerCase() : false);
 
+    const hasCase = Boolean(item.prepositionCase && item.prepositionCase.trim());
     let caseOk = true;
-    if (item.prepositionCase) {
-      caseOk = (qState.prepositionCaseSelected || '').trim().toLowerCase() === item.prepositionCase.trim().toLowerCase();
+    if (hasCase) {
+      caseOk = (qState.prepositionCaseSelected || '').trim().toLowerCase() === item.prepositionCase!.trim().toLowerCase();
     }
-
-    const isCorrect = prepOk && caseOk;
 
     updateAnswerField(item.id, {
       prepositionChecked: true
     });
 
-    recordSubCheckResult(item, isCorrect, 20, -10);
+    let delta = prepOk ? 8 : -4;
+    if (hasCase) {
+      delta += caseOk ? 6 : -3;
+    }
+
+    const isAllCorrect = prepOk && (!hasCase || caseOk);
+    const attemptLogged = !!qState.attemptLogged;
+    const isNewAttempt = !attemptLogged;
+
+    updateAnswerField(item.id, { attemptLogged: true });
+    onUpdateVocabMastery(item.id, delta, { isNewAttempt, correctDelta: isAllCorrect ? 1 : 0 });
   };
 
   const renderSentenceWithBlank = (item: VocabItem) => {
