@@ -396,8 +396,8 @@ const VocabCard: React.FC<VocabCardProps> = ({
         )}
       </div>
 
-      {/* Antonym / Opposites (Adjectives ONLY) */}
-      {itemType === 'adjective' && item.antonym && (
+      {/* Antonym / Opposites */}
+      {item.antonym && (
         <div className="mt-2.5 p-2.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200/90 dark:border-amber-800/80 flex items-center justify-between gap-2 shadow-2xs">
           <span className="text-xs font-black text-amber-900 dark:text-amber-200 flex items-center gap-1">
             <ArrowLeftRight className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -448,11 +448,19 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
   const [level, setLevel] = useState<CefrLevel>(item.level || 'A1');
 
   // Noun fields
+  const [enableNounProps, setEnableNounProps] = useState<boolean>(() => {
+    if (item.type === 'noun') return true;
+    return Boolean(item.gender || item.plural);
+  });
   const [gender, setGender] = useState<GrammaticalGender | ''>(item.gender || '');
   const [plural, setPlural] = useState<string>(item.plural || '');
   const [noPlural, setNoPlural] = useState<boolean>(item.plural === 'ohne Plural' || item.plural === '-');
 
   // Verb fields
+  const [enableVerbConjugation, setEnableVerbConjugation] = useState<boolean>(() => {
+    if (item.type === 'verb') return true;
+    return Boolean(item.present3rd || item.praeteritum || item.perfekt || item.isIrregular);
+  });
   const [present3rd, setPresent3rd] = useState<string>(item.present3rd || '');
   const [praeteritum, setPraeteritum] = useState<string>(item.praeteritum || '');
   const [perfekt, setPerfekt] = useState<string>(item.perfekt || '');
@@ -463,7 +471,11 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
     return checkIsIrregularVerb(item);
   });
 
-  // Adjective fields
+  // Opposite / Antonym fields
+  const [enableAntonym, setEnableAntonym] = useState<boolean>(() => {
+    if (item.type === 'adjective') return true;
+    return Boolean(item.antonym);
+  });
   const [antonym, setAntonym] = useState<string>(item.antonym || '');
 
   // Preposition fields (For Verbs & Phrases)
@@ -487,13 +499,13 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
       translationAr: item.translationAr,
       translationEn: translationEn.trim() || undefined,
       level: level,
-      gender: wordType === 'noun' ? (gender || undefined) : undefined,
-      plural: wordType === 'noun' ? (noPlural ? 'ohne Plural' : (plural.trim() || undefined)) : undefined,
-      present3rd: wordType === 'verb' ? (present3rd.trim() || undefined) : undefined,
-      praeteritum: wordType === 'verb' ? (praeteritum.trim() || undefined) : undefined,
-      perfekt: wordType === 'verb' ? (perfekt.trim() || undefined) : undefined,
-      isIrregular: wordType === 'verb' ? isIrregular : undefined,
-      antonym: wordType === 'adjective' && antonym.trim() ? antonym.trim() : undefined,
+      gender: wordType === 'noun' && enableNounProps ? (gender || undefined) : undefined,
+      plural: wordType === 'noun' && enableNounProps ? (noPlural ? 'ohne Plural' : (plural.trim() || undefined)) : undefined,
+      present3rd: wordType === 'verb' && enableVerbConjugation ? (present3rd.trim() || undefined) : undefined,
+      praeteritum: wordType === 'verb' && enableVerbConjugation ? (praeteritum.trim() || undefined) : undefined,
+      perfekt: wordType === 'verb' && enableVerbConjugation ? (perfekt.trim() || undefined) : undefined,
+      isIrregular: wordType === 'verb' && enableVerbConjugation ? isIrregular : undefined,
+      antonym: enableAntonym && antonym.trim() ? antonym.trim() : undefined,
       preposition: hasPrepAndCase ? (preposition.trim() || undefined) : undefined,
       prepositionCase: hasPrepAndCase ? ((prepositionCase || undefined) as GrammaticalCase | undefined) : undefined,
       case: hasPrepAndCase ? ((prepositionCase || undefined) as GrammaticalCase | undefined) : undefined,
@@ -542,7 +554,12 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
                 <button
                   key={t.type}
                   type="button"
-                  onClick={() => setWordType(t.type)}
+                  onClick={() => {
+                    setWordType(t.type);
+                    if (t.type === 'noun') setEnableNounProps(true);
+                    if (t.type === 'verb') setEnableVerbConjugation(true);
+                    if (t.type === 'adjective') setEnableAntonym(true);
+                  }}
                   className={`py-2 px-2.5 rounded-2xl border text-xs font-black transition-all cursor-pointer text-center ${
                     wordType === t.type
                       ? `${t.activeBg} shadow-xs`
@@ -609,67 +626,88 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
           {/* Noun-specific fields */}
           {wordType === 'noun' && (
             <div className="p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-2xl space-y-3">
-              <span className="text-xs font-black text-blue-900 dark:text-blue-300 block">
-                Noun Properties:
-              </span>
-
-              {/* Article / Gender */}
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Article:
-                </label>
-                <div className="grid grid-cols-4 gap-2 dir-ltr">
-                  {(['der', 'die', 'das', ''] as const).map(g => (
-                    <button
-                      key={g || 'none'}
-                      type="button"
-                      onClick={() => setGender(g as GrammaticalGender)}
-                      className={`py-1.5 px-2 rounded-xl text-xs font-black border transition-all cursor-pointer text-center ${
-                        gender === g
-                          ? g === 'der' ? 'bg-blue-600 text-white border-blue-600'
-                            : g === 'die' ? 'bg-rose-600 text-white border-rose-600'
-                            : g === 'das' ? 'bg-emerald-600 text-white border-emerald-600'
-                            : 'bg-slate-700 text-white border-slate-700'
-                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      {g ? g : 'No Article'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Plural Input */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
-                    Plural Form:
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={noPlural}
-                      onChange={e => {
-                        setNoPlural(e.target.checked);
-                        if (e.target.checked) setPlural('');
-                      }}
-                      className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-                    />
-                    <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400">
-                      No Plural Form (ohne Plural)
-                    </span>
-                  </label>
-                </div>
-                {!noPlural && (
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="text"
-                    value={plural}
-                    onChange={e => setPlural(e.target.value)}
-                    placeholder="e.g. die Tische or -e"
-                    className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr"
+                    type="checkbox"
+                    checked={enableNounProps}
+                    onChange={e => setEnableNounProps(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
                   />
-                )}
+                  <span className="text-xs font-black text-blue-900 dark:text-blue-300">
+                    Noun Properties (خصائص الاسم)
+                  </span>
+                </label>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  enableNounProps
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300'
+                    : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                }`}>
+                  {enableNounProps ? 'Active • مفعل' : 'Disabled • معطل'}
+                </span>
               </div>
+
+              {enableNounProps && (
+                <div className="space-y-3 pt-1 animate-fade-in">
+                  {/* Article / Gender */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Article:
+                    </label>
+                    <div className="grid grid-cols-4 gap-2 dir-ltr">
+                      {(['der', 'die', 'das', ''] as const).map(g => (
+                        <button
+                          key={g || 'none'}
+                          type="button"
+                          onClick={() => setGender(g as GrammaticalGender)}
+                          className={`py-1.5 px-2 rounded-xl text-xs font-black border transition-all cursor-pointer text-center ${
+                            gender === g
+                              ? g === 'der' ? 'bg-blue-600 text-white border-blue-600'
+                                : g === 'die' ? 'bg-rose-600 text-white border-rose-600'
+                                : g === 'das' ? 'bg-emerald-600 text-white border-emerald-600'
+                                : 'bg-slate-700 text-white border-slate-700'
+                              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          {g ? g : 'No Article'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Plural Input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Plural Form:
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={noPlural}
+                          onChange={e => {
+                            setNoPlural(e.target.checked);
+                            if (e.target.checked) setPlural('');
+                          }}
+                          className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400">
+                          No Plural Form (ohne Plural)
+                        </span>
+                      </label>
+                    </div>
+                    {!noPlural && (
+                      <input
+                        type="text"
+                        value={plural}
+                        onChange={e => setPlural(e.target.value)}
+                        placeholder="e.g. die Tische or -e"
+                        className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -677,80 +715,122 @@ const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }
           {wordType === 'verb' && (
             <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900 rounded-2xl space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-emerald-900 dark:text-emerald-300 block">
-                  Verb Conjugations:
-                </span>
-                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    checked={isIrregular}
-                    onChange={e => setIsIrregular(e.target.checked)}
-                    className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                    checked={enableVerbConjugation}
+                    onChange={e => setEnableVerbConjugation(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                   />
-                  <span className="text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300">
-                    Irregular Verb
+                  <span className="text-xs font-black text-emerald-900 dark:text-emerald-300">
+                    Verb Conjugation (تصريف الأفعال)
                   </span>
                 </label>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  enableVerbConjugation
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
+                    : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                }`}>
+                  {enableVerbConjugation ? 'Active • مفعل' : 'Disabled • معطل'}
+                </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Präsens (3rd Person Sing.)
-                  </label>
-                  <input
-                    type="text"
-                    value={present3rd}
-                    onChange={e => setPresent3rd(e.target.value)}
-                    placeholder="e.g. sieht / geht"
-                    className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
-                  />
-                </div>
+              {enableVerbConjugation && (
+                <div className="space-y-3 pt-1 animate-fade-in">
+                  <div className="flex items-center justify-end">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isIrregular}
+                        onChange={e => setIsIrregular(e.target.checked)}
+                        className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                      />
+                      <span className="text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300">
+                        Irregular Verb
+                      </span>
+                    </label>
+                  </div>
 
-                <div>
-                  <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Präteritum
-                  </label>
-                  <input
-                    type="text"
-                    value={praeteritum}
-                    onChange={e => setPraeteritum(e.target.value)}
-                    placeholder="e.g. sah / ging"
-                    className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
-                  />
-                </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        Präsens (3rd Person Sing.)
+                      </label>
+                      <input
+                        type="text"
+                        value={present3rd}
+                        onChange={e => setPresent3rd(e.target.value)}
+                        placeholder="e.g. sieht / geht"
+                        className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
+                      />
+                    </div>
 
-                <div>
-                  <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Perfekt
-                  </label>
-                  <input
-                    type="text"
-                    value={perfekt}
-                    onChange={e => setPerfekt(e.target.value)}
-                    placeholder="e.g. hat gesehen"
-                    className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
-                  />
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        Präteritum
+                      </label>
+                      <input
+                        type="text"
+                        value={praeteritum}
+                        onChange={e => setPraeteritum(e.target.value)}
+                        placeholder="e.g. sah / ging"
+                        className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        Perfekt
+                      </label>
+                      <input
+                        type="text"
+                        value={perfekt}
+                        onChange={e => setPerfekt(e.target.value)}
+                        placeholder="e.g. hat gesehen"
+                        className="w-full p-2 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
-          {/* Antonym / Opposite field (Adjectives ONLY) */}
-          {wordType === 'adjective' && (
-            <div className="p-4 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-2xl space-y-2">
-              <span className="text-xs font-black text-amber-900 dark:text-amber-300 block">
-                Opposite / Antonym (الضد):
-              </span>
-              <div>
-                <input
-                  type="text"
-                  value={antonym}
-                  onChange={e => setAntonym(e.target.value)}
-                  placeholder="e.g. klein or aufhören"
-                  className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500 dir-ltr"
-                />
+          {/* Antonym / Opposite field */}
+          {(wordType === 'adjective' || wordType === 'verb' || wordType === 'noun' || wordType === 'Others' || wordType === 'expression') && (
+            <div className="p-4 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={enableAntonym}
+                    onChange={e => setEnableAntonym(e.target.checked)}
+                    className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-black text-amber-900 dark:text-amber-300">
+                    Opposite / Antonym (الضد)
+                  </span>
+                </label>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  enableAntonym
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
+                    : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                }`}>
+                  {enableAntonym ? 'Active • مفعل' : 'Disabled • معطل'}
+                </span>
               </div>
+
+              {enableAntonym && (
+                <div className="pt-1 animate-fade-in">
+                  <input
+                    type="text"
+                    value={antonym}
+                    onChange={e => setAntonym(e.target.value)}
+                    placeholder="e.g. klein (for groß), aufhören (for anfangen)"
+                    className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500 dir-ltr"
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -893,13 +973,16 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
   // Manual Word Form State
   const [manualType, setManualType] = useState<VocabType>('noun');
   const [manualWord, setManualWord] = useState('');
+  const [manualEnableNounProps, setManualEnableNounProps] = useState(true);
   const [manualGender, setManualGender] = useState<'der' | 'die' | 'das' | ''>('der');
   const [manualPlural, setManualPlural] = useState('');
   const [manualNoPlural, setManualNoPlural] = useState(false);
+  const [manualEnableVerbConjugation, setManualEnableVerbConjugation] = useState(true);
   const [manualIsIrregular, setManualIsIrregular] = useState(false);
   const [manualPresent3rd, setManualPresent3rd] = useState('');
   const [manualPraeteritum, setManualPraeteritum] = useState('');
   const [manualPerfekt, setManualPerfekt] = useState('');
+  const [manualEnableAntonym, setManualEnableAntonym] = useState(false);
   const [manualAntonym, setManualAntonym] = useState('');
   const [manualHasPreposition, setManualHasPreposition] = useState(false);
   const [manualPreposition, setManualPreposition] = useState('');
@@ -1491,13 +1574,13 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       id: Date.now().toString() + '_' + Math.random().toString(36).substring(2, 7),
       word: finalWord,
       type: manualType,
-      gender: manualType === 'noun' && finalGender ? finalGender : undefined,
-      plural: manualType === 'noun' && !manualNoPlural && manualPlural.trim() ? manualPlural.trim() : undefined,
-      isIrregular: manualType === 'verb' ? manualIsIrregular : undefined,
-      present3rd: manualType === 'verb' && manualPresent3rd.trim() ? manualPresent3rd.trim() : undefined,
-      praeteritum: manualType === 'verb' && manualPraeteritum.trim() ? manualPraeteritum.trim() : undefined,
-      perfekt: manualType === 'verb' && manualPerfekt.trim() ? manualPerfekt.trim() : undefined,
-      antonym: manualType === 'adjective' && manualAntonym.trim() ? manualAntonym.trim() : undefined,
+      gender: manualType === 'noun' && manualEnableNounProps && finalGender ? finalGender : undefined,
+      plural: manualType === 'noun' && manualEnableNounProps && !manualNoPlural && manualPlural.trim() ? manualPlural.trim() : undefined,
+      isIrregular: manualType === 'verb' && manualEnableVerbConjugation ? manualIsIrregular : undefined,
+      present3rd: manualType === 'verb' && manualEnableVerbConjugation && manualPresent3rd.trim() ? manualPresent3rd.trim() : undefined,
+      praeteritum: manualType === 'verb' && manualEnableVerbConjugation && manualPraeteritum.trim() ? manualPraeteritum.trim() : undefined,
+      perfekt: manualType === 'verb' && manualEnableVerbConjugation && manualPerfekt.trim() ? manualPerfekt.trim() : undefined,
+      antonym: manualEnableAntonym && manualAntonym.trim() ? manualAntonym.trim() : undefined,
       preposition: manualHasPreposition && manualPreposition.trim() ? manualPreposition.trim() : undefined,
       prepositionCase: manualHasPreposition && manualPrepositionCase ? manualPrepositionCase : undefined,
       translationAr: manualTranslationEn.trim() || finalWord,
@@ -1523,11 +1606,14 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
 
     // Reset form
     setManualWord('');
+    setManualEnableNounProps(true);
     setManualPlural('');
     setManualNoPlural(false);
+    setManualEnableVerbConjugation(true);
     setManualPresent3rd('');
     setManualPraeteritum('');
     setManualPerfekt('');
+    setManualEnableAntonym(false);
     setManualAntonym('');
     setManualHasPreposition(false);
     setManualPreposition('');
@@ -1983,7 +2069,10 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                     <button
                       type="button"
-                      onClick={() => setManualType('noun')}
+                      onClick={() => {
+                        setManualType('noun');
+                        setManualEnableNounProps(true);
+                      }}
                       className={`py-2.5 px-3 rounded-2xl border text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         manualType === 'noun'
                           ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
@@ -1995,7 +2084,10 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setManualType('verb')}
+                      onClick={() => {
+                        setManualType('verb');
+                        setManualEnableVerbConjugation(true);
+                      }}
                       className={`py-2.5 px-3 rounded-2xl border text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         manualType === 'verb'
                           ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
@@ -2007,7 +2099,10 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setManualType('adjective')}
+                      onClick={() => {
+                        setManualType('adjective');
+                        setManualEnableAntonym(true);
+                      }}
                       className={`py-2.5 px-3 rounded-2xl border text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         manualType === 'adjective'
                           ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
@@ -2066,146 +2161,211 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
                 {/* 3. TYPE-SPECIFIC FIELDS */}
                 {manualType === 'noun' && (
                   <div className="p-3.5 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-2xl space-y-3">
-                    <span className="text-xs font-black text-blue-900 dark:text-blue-300 block">
-                      Noun Details:
-                    </span>
-
-                    {/* Gender / Article Pills */}
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Article / Gender:
-                      </label>
-                      <div className="grid grid-cols-4 gap-2 dir-ltr">
-                        {(['der', 'die', 'das', ''] as const).map(g => (
-                          <button
-                            key={g || 'none'}
-                            type="button"
-                            onClick={() => setManualGender(g)}
-                            className={`py-1.5 px-2 rounded-xl text-xs font-black border transition-all cursor-pointer text-center ${
-                              manualGender === g
-                                ? g === 'der' ? 'bg-blue-600 text-white border-blue-600'
-                                  : g === 'die' ? 'bg-rose-600 text-white border-rose-600'
-                                  : g === 'das' ? 'bg-emerald-600 text-white border-emerald-600'
-                                  : 'bg-slate-700 text-white border-slate-700'
-                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
-                            }`}
-                          >
-                            {g ? g : 'None'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Plural Input with No Plural Checkbox */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
-                          Plural Form:
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={manualNoPlural}
-                            onChange={e => {
-                              setManualNoPlural(e.target.checked);
-                              if (e.target.checked) setManualPlural('');
-                            }}
-                            className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-                          />
-                          <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-                            No plural form (Kein Plural)
-                          </span>
-                        </label>
-                      </div>
-                      {!manualNoPlural && (
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
                         <input
-                          type="text"
-                          value={manualPlural}
-                          onChange={e => setManualPlural(e.target.value)}
-                          placeholder="e.g. die Tische or Tische"
-                          className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr"
+                          type="checkbox"
+                          checked={manualEnableNounProps}
+                          onChange={e => setManualEnableNounProps(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
                         />
-                      )}
+                        <span className="text-xs font-black text-blue-900 dark:text-blue-300">
+                          Noun Properties (خصائص الاسم)
+                        </span>
+                      </label>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        manualEnableNounProps
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300'
+                          : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      }`}>
+                        {manualEnableNounProps ? 'Active • مفعل' : 'Disabled • معطل'}
+                      </span>
                     </div>
+
+                    {manualEnableNounProps && (
+                      <div className="space-y-3 pt-1 animate-fade-in">
+                        {/* Gender / Article Pills */}
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                            Article / Gender:
+                          </label>
+                          <div className="grid grid-cols-4 gap-2 dir-ltr">
+                            {(['der', 'die', 'das', ''] as const).map(g => (
+                              <button
+                                key={g || 'none'}
+                                type="button"
+                                onClick={() => setManualGender(g)}
+                                className={`py-1.5 px-2 rounded-xl text-xs font-black border transition-all cursor-pointer text-center ${
+                                  manualGender === g
+                                    ? g === 'der' ? 'bg-blue-600 text-white border-blue-600'
+                                      : g === 'die' ? 'bg-rose-600 text-white border-rose-600'
+                                      : g === 'das' ? 'bg-emerald-600 text-white border-emerald-600'
+                                      : 'bg-slate-700 text-white border-slate-700'
+                                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
+                                }`}
+                              >
+                                {g ? g : 'None'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Plural Input with No Plural Checkbox */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                              Plural Form:
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={manualNoPlural}
+                                onChange={e => {
+                                  setManualNoPlural(e.target.checked);
+                                  if (e.target.checked) setManualPlural('');
+                                }}
+                                className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                              />
+                              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                                No plural form (Kein Plural)
+                              </span>
+                            </label>
+                          </div>
+                          {!manualNoPlural && (
+                            <input
+                              type="text"
+                              value={manualPlural}
+                              onChange={e => setManualPlural(e.target.value)}
+                              placeholder="e.g. die Tische or Tische"
+                              className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {manualType === 'verb' && (
                   <div className="p-3.5 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900 rounded-2xl space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-emerald-900 dark:text-emerald-300 block">
-                        Verb Conjugations:
-                      </span>
-
-                      {/* Irregular Checkbox */}
-                      <label className="flex items-center gap-2 cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          checked={manualIsIrregular}
-                          onChange={e => setManualIsIrregular(e.target.checked)}
+                          checked={manualEnableVerbConjugation}
+                          onChange={e => setManualEnableVerbConjugation(e.target.checked)}
                           className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                         />
                         <span className="text-xs font-black text-emerald-900 dark:text-emerald-300">
-                          Irregular Verb
+                          Verb Conjugation (تصريف الأفعال)
                         </span>
                       </label>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        manualEnableVerbConjugation
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
+                          : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      }`}>
+                        {manualEnableVerbConjugation ? 'Active • مفعل' : 'Disabled • معطل'}
+                      </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                          Präsens (3rd) [er/sie/es]:
-                        </label>
-                        <input
-                          type="text"
-                          value={manualPresent3rd}
-                          onChange={e => setManualPresent3rd(e.target.value)}
-                          placeholder="e.g. sieht / geht"
-                          className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
+                    {manualEnableVerbConjugation && (
+                      <div className="space-y-3 pt-1 animate-fade-in">
+                        {/* Irregular Checkbox */}
+                        <div className="flex items-center justify-end">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={manualIsIrregular}
+                              onChange={e => setManualIsIrregular(e.target.checked)}
+                              className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <span className="text-xs font-black text-emerald-900 dark:text-emerald-300">
+                              Irregular Verb
+                            </span>
+                          </label>
+                        </div>
 
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                          Präteritum:
-                        </label>
-                        <input
-                          type="text"
-                          value={manualPraeteritum}
-                          onChange={e => setManualPraeteritum(e.target.value)}
-                          placeholder="e.g. sah / ging"
-                          className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                              Präsens (3rd) [er/sie/es]:
+                            </label>
+                            <input
+                              type="text"
+                              value={manualPresent3rd}
+                              onChange={e => setManualPresent3rd(e.target.value)}
+                              placeholder="e.g. sieht / geht"
+                              className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
 
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                          Perfekt:
-                        </label>
-                        <input
-                          type="text"
-                          value={manualPerfekt}
-                          onChange={e => setManualPerfekt(e.target.value)}
-                          placeholder="e.g. hat gesehen / ist gegangen"
-                          className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                              Präteritum:
+                            </label>
+                            <input
+                              type="text"
+                              value={manualPraeteritum}
+                              onChange={e => setManualPraeteritum(e.target.value)}
+                              placeholder="e.g. sah / ging"
+                              className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                              Perfekt:
+                            </label>
+                            <input
+                              type="text"
+                              value={manualPerfekt}
+                              onChange={e => setManualPerfekt(e.target.value)}
+                              placeholder="e.g. hat gesehen / ist gegangen"
+                              className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
 
-                {manualType === 'adjective' && (
-                  <div className="p-3.5 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-2xl space-y-2">
-                    <label className="text-xs font-black text-amber-900 dark:text-amber-300 block mb-1">
-                      Antonym / Opposite:
-                    </label>
-                    <input
-                      type="text"
-                      value={manualAntonym}
-                      onChange={e => setManualAntonym(e.target.value)}
-                      placeholder="e.g. klein (for groß) or hässlich (for schön)"
-                      className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500 dir-ltr"
-                    />
+                {/* Antonym / Opposite Section (Available for all or Adjectives) */}
+                {(manualType === 'adjective' || manualType === 'verb' || manualType === 'noun' || manualType === 'expression' || manualType === 'other') && (
+                  <div className="p-3.5 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={manualEnableAntonym}
+                          onChange={e => setManualEnableAntonym(e.target.checked)}
+                          className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span className="text-xs font-black text-amber-900 dark:text-amber-300">
+                          Opposite / Antonym (الضد)
+                        </span>
+                      </label>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        manualEnableAntonym
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
+                          : 'bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      }`}>
+                        {manualEnableAntonym ? 'Active • مفعل' : 'Disabled • معطل'}
+                      </span>
+                    </div>
+
+                    {manualEnableAntonym && (
+                      <div className="pt-1 animate-fade-in">
+                        <input
+                          type="text"
+                          value={manualAntonym}
+                          onChange={e => setManualAntonym(e.target.value)}
+                          placeholder="e.g. klein (for groß), aufhören (for anfangen)"
+                          className="w-full p-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500 dir-ltr"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 

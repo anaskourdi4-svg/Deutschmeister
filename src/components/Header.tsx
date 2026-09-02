@@ -23,7 +23,8 @@ import {
   FolderKanban,
   PlusCircle,
   Sparkles,
-  ArrowUpDown
+  ArrowUpDown,
+  X
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -100,7 +101,7 @@ export const Header: React.FC<HeaderProps> = ({
     switch (tab) {
       case 'quiz': return 'Interactive Practice';
       case 'vocab': return 'Vocabulary List';
-      case 'decks': return 'Decks & Database';
+      case 'decks': return 'Database';
       case 'stats': return 'Training Stats';
       case 'settings': return 'Question Settings';
     }
@@ -110,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
     switch (tab) {
       case 'quiz': return 'Practice';
       case 'vocab': return 'Vocab';
-      case 'decks': return 'Decks';
+      case 'decks': return 'Database';
       case 'stats': return 'Stats';
       case 'settings': return 'Settings';
     }
@@ -141,12 +142,11 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* Navigation Dropdown Items */}
               {isNavOpen && (
-                <div className="absolute left-0 mt-2 w-72 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 py-2.5 z-50 animate-fade-in space-y-1 origin-top-left">
-                  
+                <div className="absolute left-0 mt-2 w-72 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-fade-in space-y-1 origin-top-left">
                   {/* 1. Interactive Practice */}
                   <button
-                    onClick={() => { setActiveTab('quiz'); setIsNavOpen(false); }}
-                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                    onClick={() => setActiveTab('quiz')}
+                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer rounded-xl ${
                       activeTab === 'quiz'
                         ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 font-extrabold'
                         : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
@@ -161,8 +161,8 @@ export const Header: React.FC<HeaderProps> = ({
 
                   {/* 2. Vocabulary List */}
                   <button
-                    onClick={() => { setActiveTab('vocab'); setIsNavOpen(false); }}
-                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                    onClick={() => setActiveTab('vocab')}
+                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer rounded-xl ${
                       activeTab === 'vocab'
                         ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 font-extrabold'
                         : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
@@ -177,8 +177,8 @@ export const Header: React.FC<HeaderProps> = ({
 
                   {/* 3. Training Stats */}
                   <button
-                    onClick={() => { setActiveTab('stats'); setIsNavOpen(false); }}
-                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                    onClick={() => setActiveTab('stats')}
+                    className={`w-full px-3.5 py-2.5 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer rounded-xl ${
                       activeTab === 'stats'
                         ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 font-extrabold'
                         : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
@@ -197,9 +197,9 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
 
                   <div className="border-t border-slate-100 dark:border-slate-800 my-1 pt-1 space-y-1">
-                    {/* 4. Decks & Database */}
+                    {/* 4. Database */}
                     <button
-                      onClick={() => { setActiveTab('decks'); setIsNavOpen(false); }}
+                      onClick={() => setActiveTab('decks')}
                       className={`w-full px-3.5 py-2.5 text-xs font-extrabold flex items-center justify-between transition-colors cursor-pointer rounded-xl ${
                         activeTab === 'decks'
                           ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300'
@@ -208,14 +208,14 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       <div className="flex items-center gap-2.5">
                         <FolderKanban className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                        <span>Decks & Database</span>
+                        <span>Database</span>
                       </div>
                       {activeTab === 'decks' && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                     </button>
 
                     {/* 5. Settings */}
                     <button
-                      onClick={() => { setActiveTab('settings'); setIsNavOpen(false); }}
+                      onClick={() => setActiveTab('settings')}
                       className={`w-full px-3.5 py-2.5 text-xs font-extrabold flex items-center justify-between transition-colors cursor-pointer rounded-xl ${
                         activeTab === 'settings'
                           ? 'bg-purple-50 text-purple-700 dark:bg-purple-950/80 dark:text-purple-300'

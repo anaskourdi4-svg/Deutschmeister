@@ -72,7 +72,12 @@ export default function App() {
       if (savedSets) {
         const parsed = JSON.parse(savedSets);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return filterValidVocabItems(parsed);
+          const filtered = filterValidVocabItems(parsed).filter(
+            s => s.id !== 'set_validation_demo' && s.levelGroup !== 'Validation'
+          );
+          if (filtered.length > 0) {
+            return filtered;
+          }
         }
       }
     } catch (e) {
@@ -277,6 +282,46 @@ export default function App() {
     }
   };
 
+  // Transfer all items from source deck to target deck
+  const handleTransferDeckItems = (sourceSetId: string, targetSetId: string) => {
+    if (!sourceSetId || !targetSetId || sourceSetId === targetSetId) return;
+
+    setVocabSets(prevSets => {
+      const sourceSet = prevSets.find(s => s.id === sourceSetId);
+      const targetSet = prevSets.find(s => s.id === targetSetId);
+      if (!sourceSet || !targetSet) return prevSets;
+
+      const itemsToMove = (sourceSet.items || []).filter(isValidVocabItem);
+      if (itemsToMove.length === 0) return prevSets;
+
+      const targetExistingKeys = new Set((targetSet.items || []).map(item => getVocabItemKey(item)));
+      const uniqueNewItems = itemsToMove.filter(item => !targetExistingKeys.has(getVocabItemKey(item)));
+
+      return prevSets.map(set => {
+        if (set.id === sourceSetId) {
+          return {
+            ...set,
+            items: [],
+          };
+        }
+        if (set.id === targetSetId) {
+          return {
+            ...set,
+            items: [...(set.items || []), ...uniqueNewItems],
+          };
+        }
+        return set;
+      });
+    });
+  };
+
+  // Clear all items in a specific deck
+  const handleClearDeckItems = (setId: string) => {
+    setVocabSets(prevSets =>
+      prevSets.map(set => (set.id === setId ? { ...set, items: [] } : set))
+    );
+  };
+
   const handleBatchImportSets = (importedSets: VocabSet[], targetGroup?: string) => {
     if (!Array.isArray(importedSets) || importedSets.length === 0) return;
 
@@ -398,6 +443,8 @@ export default function App() {
             onRenameVocabSet={handleRenameVocabSet}
             onMoveVocabSet={handleMoveVocabSet}
             onDeleteVocabSet={handleDeleteVocabSet}
+            onTransferDeckItems={handleTransferDeckItems}
+            onClearDeckItems={handleClearDeckItems}
             onBatchImportSets={handleBatchImportSets}
             onExportAllSets={handleExportAllSets}
           />

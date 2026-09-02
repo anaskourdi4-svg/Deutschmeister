@@ -26,7 +26,8 @@ import {
   Languages,
   Tag,
   BarChart3,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Quote
 } from 'lucide-react';
 
 interface FlashcardQuizProps {
@@ -98,6 +99,48 @@ export function getNormalizedType(item: Partial<VocabItem>): 'noun' | 'verb' | '
   if (item.gender !== undefined) return 'noun';
   if (item.present3rd || item.praeteritum || item.perfekt) return 'verb';
   return 'others';
+}
+
+// Helper to get formatted example sentence (custom or dynamic fallback)
+export function getDisplayExample(item: VocabItem): { de: string; ar: string | null; isCustom: boolean } {
+  if (item.exampleDe && item.exampleDe.trim()) {
+    return {
+      de: item.exampleDe.trim(),
+      ar: item.exampleAr && item.exampleAr.trim() ? item.exampleAr.trim() : null,
+      isCustom: true
+    };
+  }
+
+  const word = (item.word || '').trim();
+  const normType = getNormalizedType(item);
+
+  if (normType === 'noun') {
+    const art = item.gender || 'das';
+    return {
+      de: `Das ist ${art} ${word}.`,
+      ar: null,
+      isCustom: false
+    };
+  } else if (normType === 'verb') {
+    const base = word.endsWith('en') ? word.slice(0, -2) + 'e' : word;
+    return {
+      de: `Ich ${base} jeden Tag gerne.`,
+      ar: null,
+      isCustom: false
+    };
+  } else if (normType === 'adjective') {
+    return {
+      de: `Das ist sehr ${word}.`,
+      ar: null,
+      isCustom: false
+    };
+  }
+
+  return {
+    de: `${word} ist wichtig für den Alltag.`,
+    ar: null,
+    isCustom: false
+  };
 }
 
 // Extract preposition phrase from example sentence
@@ -284,9 +327,10 @@ function getFallbackAntonym(word: string): string {
   return 'nicht ' + cleanWord;
 }
 
-// Generate 3 choices for adjective or verb antonym questions
+// Generate 3 choices for antonym questions (only when item has an antonym)
 function getAntonymChoices(item: VocabItem, allVocab: VocabItem[]): string[] {
-  const correct = (item.antonym || getFallbackAntonym(item.word)).trim();
+  const correct = (item.antonym || '').trim();
+  if (!correct) return [];
   const itemType = getNormalizedType(item);
 
   const defaultAdjectives = [
@@ -301,12 +345,17 @@ function getAntonymChoices(item: VocabItem, allVocab: VocabItem[]): string[] {
     'gewinnen', 'verlieren', 'stehen', 'sitzen', 'bringen', 'holen'
   ];
 
+  const defaultNouns = [
+    'Tag', 'Nacht', 'Frage', 'Antwort', 'Anfang', 'Ende',
+    'Freund', 'Feind', 'Glück', 'Pech', 'Krieg', 'Frieden'
+  ];
+
   const vocabWords = allVocab
     .filter(v => getNormalizedType(v) === itemType)
-    .map(v => v.word.trim())
+    .map(v => (v.antonym || v.word).trim())
     .filter(w => w && w.toLowerCase() !== item.word.toLowerCase() && w.toLowerCase() !== correct.toLowerCase());
 
-  const defaults = itemType === 'verb' ? defaultVerbs : defaultAdjectives;
+  const defaults = itemType === 'verb' ? defaultVerbs : itemType === 'noun' ? defaultNouns : defaultAdjectives;
 
   const distractorPool = Array.from(new Set([...vocabWords, ...defaults]))
     .filter(w => w.toLowerCase() !== item.word.toLowerCase() && w.toLowerCase() !== correct.toLowerCase());
@@ -319,11 +368,11 @@ function getAntonymChoices(item: VocabItem, allVocab: VocabItem[]): string[] {
   const idx1 = Math.abs(hash) % distractorPool.length;
   const idx2 = Math.abs(hash + 7) % distractorPool.length;
 
-  let d1 = distractorPool[idx1] || (itemType === 'verb' ? 'gehen' : 'langsam');
-  let d2 = distractorPool[idx2 === idx1 ? (idx2 + 1) % distractorPool.length : idx2] || (itemType === 'verb' ? 'aufhören' : 'schwer');
+  let d1 = distractorPool[idx1] || (itemType === 'verb' ? 'gehen' : itemType === 'noun' ? 'Ende' : 'langsam');
+  let d2 = distractorPool[idx2 === idx1 ? (idx2 + 1) % distractorPool.length : idx2] || (itemType === 'verb' ? 'aufhören' : itemType === 'noun' ? 'Antwort' : 'schwer');
 
   if (d1.toLowerCase() === d2.toLowerCase()) {
-    d2 = itemType === 'verb' ? 'schließen' : 'einfach';
+    d2 = itemType === 'verb' ? 'schließen' : itemType === 'noun' ? 'Frieden' : 'einfach';
   }
 
   const choices = [correct, d1, d2];
@@ -469,6 +518,22 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   // Session Completion Modal
   const [isSessionCompleted, setIsSessionCompleted] = useState<boolean>(false);
 
+  // Active Item for Example Sentence Modal Popup
+  const [activeExampleItem, setActiveExampleItem] = useState<VocabItem | null>(null);
+
+  // Close example modal on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveExampleItem(null);
+      }
+    };
+    if (activeExampleItem) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [activeExampleItem]);
+
   // Pagination State (10 items per page)
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 10;
@@ -613,130 +678,111 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   const safePage = Math.min(currentPage, totalPages);
   const pageItems = sessionItems.slice((safePage - 1) * itemsPerPage, safePage * itemsPerPage);
 
-  // Session Progress Calculations
+  // Session Progress Calculations: strictly match enabled sections for each item
   const isItemAnswered = (item: VocabItem) => {
     const st = answers[item.id];
     if (!st) return false;
 
-    if (item.preposition && item.preposition.trim()) {
-      if (st.prepositionChecked) return true;
-    }
+    const normType = getNormalizedType(item);
+    const isNoun = normType === 'noun';
+    const isVerb = normType === 'verb';
+    const isAdj = normType === 'adjective';
+    const isExpr = normType === 'expression';
 
-    const itemType = getNormalizedType(item);
+    const showTrans = isNoun ? settings.nouns.translation :
+      isVerb ? settings.verbs.translation :
+      isAdj ? settings.adjectives.translation :
+      isExpr ? (settings.expressions?.translation ?? true) :
+      settings.others.translation;
 
-    if (itemType === 'adjective') {
-      let answered = true;
-      if (settings.adjectives.translation) answered = answered && !!st.translationChecked;
-      if (settings.adjectives.antonym) answered = answered && !!st.antonymChecked;
-      return answered;
-    }
-    if (itemType === 'verb') {
-      let answered = true;
-      if (settings.verbs.translation) answered = answered && !!st.translationChecked;
-      const hasPres = Boolean(item.present3rd && item.present3rd.trim());
-      const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
-      const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
-      const hasAnyConjugation = (settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf);
-      if (hasAnyConjugation) {
-        answered = answered && !!st.verbChecked;
-      }
-      if ((settings.verbs.prepositionCase ?? true) && item.preposition) answered = answered && !!st.prepositionChecked;
-      return answered;
-    }
-    if (itemType === 'noun') {
-      let answered = true;
-      if (settings.nouns.translation) answered = answered && !!st.translationChecked;
-      if (settings.nouns.article && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das')) {
-        answered = answered && !!st.articleChecked;
-      }
-      const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
-      if (settings.nouns.plural && hasPlural) answered = answered && !!st.pluralChecked;
-      return answered;
-    }
-    if (itemType === 'expression') {
-      let answered = true;
-      if (settings.expressions?.translation ?? true) answered = answered && !!st.translationChecked;
-      if ((settings.expressions?.prepositionCase ?? true) && item.preposition) answered = answered && !!st.prepositionChecked;
-      return answered;
-    }
-    if (itemType === 'others') {
-      let answered = true;
-      if (settings.others.translation) answered = answered && !!st.translationChecked;
-      if (item.preposition) answered = answered && !!st.prepositionChecked;
-      return answered;
-    }
-    return false;
+    const hasArticle = isNoun && Boolean(item.gender && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das'));
+    const showArticle = hasArticle && settings.nouns.article;
+
+    const hasPlural = isNoun && Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural') && item.plural.trim() !== '-');
+    const showPlural = hasPlural && settings.nouns.plural;
+
+    const hasPres = isVerb && Boolean(item.present3rd && item.present3rd.trim());
+    const hasPraet = isVerb && Boolean(item.praeteritum && item.praeteritum.trim());
+    const hasPerf = isVerb && Boolean(item.perfekt && item.perfekt.trim());
+    const showVerbConjugations = isVerb && ((settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf));
+
+    const hasAntonym = Boolean(item.antonym && item.antonym.trim());
+    const showAntonym = hasAntonym && (isAdj ? settings.adjectives.antonym : true);
+
+    const hasPrep = Boolean(item.preposition && item.preposition.trim());
+    const isPrepEnabled = isVerb ? (settings.verbs.prepositionCase ?? true) :
+      isExpr ? (settings.expressions?.prepositionCase ?? true) :
+      true;
+    const showPrep = hasPrep && isPrepEnabled;
+
+    let answered = true;
+    if (showTrans) answered = answered && !!st.translationChecked;
+    if (showArticle) answered = answered && !!st.articleChecked;
+    if (showPlural) answered = answered && !!st.pluralChecked;
+    if (showVerbConjugations) answered = answered && !!st.verbChecked;
+    if (showAntonym) answered = answered && !!st.antonymChecked;
+    if (showPrep) answered = answered && !!st.prepositionChecked;
+
+    return answered;
   };
 
   const answeredCount = sessionItems.filter(isItemAnswered).length;
   const totalInSession = sessionItems.length;
   const progressPercent = totalInSession > 0 ? Math.round((answeredCount / totalInSession) * 100) : 0;
 
-  // Correctness evaluations for Session Summary
+  // Correctness evaluations for Session Summary: strictly match enabled sections for each item
   const isItemCorrect = (item: VocabItem) => {
     const st = answers[item.id];
     if (!st) return false;
 
-    const itemType = getNormalizedType(item);
+    const normType = getNormalizedType(item);
+    const isNoun = normType === 'noun';
+    const isVerb = normType === 'verb';
+    const isAdj = normType === 'adjective';
+    const isExpr = normType === 'expression';
 
-    if (item.preposition && item.preposition.trim()) {
-      const isPrepEnabled = 
-        itemType === 'verb' ? (settings.verbs.prepositionCase ?? true) :
-        itemType === 'expression' ? (settings.expressions?.prepositionCase ?? true) :
-        true;
+    const showTrans = isNoun ? settings.nouns.translation :
+      isVerb ? settings.verbs.translation :
+      isAdj ? settings.adjectives.translation :
+      isExpr ? (settings.expressions?.translation ?? true) :
+      settings.others.translation;
 
-      if (isPrepEnabled) {
-        const fullPhrase = getPrepositionPhraseFromExample(item.exampleDe, item.preposition);
-        const inputVal = (st.prepositionInput || '').trim();
-        const isPrepOk = evaluateGermanAnswer(inputVal, item.preposition) ||
-          (fullPhrase ? evaluateGermanAnswer(inputVal, fullPhrase) : false) ||
-          (fullPhrase ? inputVal.toLowerCase() === fullPhrase.toLowerCase() : false);
-        let isCaseOk = true;
-        if (item.prepositionCase) {
-          isCaseOk = (st.prepositionCaseSelected || '').trim().toLowerCase() === item.prepositionCase.trim().toLowerCase();
-        }
-        if (!isPrepOk || !isCaseOk) return false;
-      }
+    const hasArticle = isNoun && Boolean(item.gender && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das'));
+    const showArticle = hasArticle && settings.nouns.article;
+
+    const hasPlural = isNoun && Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural') && item.plural.trim() !== '-');
+    const showPlural = hasPlural && settings.nouns.plural;
+
+    const hasPres = isVerb && Boolean(item.present3rd && item.present3rd.trim());
+    const hasPraet = isVerb && Boolean(item.praeteritum && item.praeteritum.trim());
+    const hasPerf = isVerb && Boolean(item.perfekt && item.perfekt.trim());
+    const showVerbConjugations = isVerb && ((settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf));
+
+    const hasAntonym = Boolean(item.antonym && item.antonym.trim());
+    const showAntonym = hasAntonym && (isAdj ? settings.adjectives.antonym : true);
+
+    const hasPrep = Boolean(item.preposition && item.preposition.trim());
+    const isPrepEnabled = isVerb ? (settings.verbs.prepositionCase ?? true) :
+      isExpr ? (settings.expressions?.prepositionCase ?? true) :
+      true;
+    const showPrep = hasPrep && isPrepEnabled;
+
+    let ok = true;
+
+    if (showTrans) {
+      const correctTrans = (item.translationEn || item.translationAr || '').trim().toLowerCase();
+      ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
     }
 
-    const correctTrans = (item.translationEn || item.translationAr || '').trim().toLowerCase();
-
-    if (itemType === 'adjective') {
-      let ok = true;
-      if (settings.adjectives.translation) {
-        ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
-      }
-      if (settings.adjectives.antonym) {
-        const correctAntonym = item.antonym || getFallbackAntonym(item.word);
-        ok = ok && st.selectedAntonym?.trim().toLowerCase() === correctAntonym.trim().toLowerCase();
-      }
-      return ok;
+    if (showArticle) {
+      ok = ok && st.selectedArticle === item.gender;
     }
 
-    if (itemType === 'noun') {
-      let ok = true;
-      if (settings.nouns.translation) {
-        ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
-      }
-      if (settings.nouns.article && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das')) {
-        ok = ok && st.selectedArticle === item.gender;
-      }
-      const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
-      if (settings.nouns.plural && hasPlural) {
-        ok = ok && evaluatePluralAnswer(st.pluralInput || '', item.plural);
-      }
-      return ok;
+    if (showPlural) {
+      ok = ok && evaluatePluralAnswer(st.pluralInput || '', item.plural!);
     }
 
-    if (itemType === 'verb') {
-      let ok = true;
-      if (settings.verbs.translation) {
-        ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
-      }
-      const hasPres = Boolean(item.present3rd && item.present3rd.trim());
-      const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
-      const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
-
+    if (showVerbConjugations) {
       if (settings.verbs.present3rd && hasPres) {
         ok = ok && evaluateGermanAnswer(st.present3rdInput || '', item.present3rd!);
       }
@@ -746,26 +792,26 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       if (settings.verbs.perfekt && hasPerf) {
         ok = ok && evaluateGermanAnswer(st.perfektInput || '', item.perfekt!, true);
       }
-      return ok;
     }
 
-    if (itemType === 'expression') {
-      let ok = true;
-      if (settings.expressions?.translation ?? true) {
-        ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
+    if (showAntonym) {
+      ok = ok && st.selectedAntonym?.trim().toLowerCase() === item.antonym!.trim().toLowerCase();
+    }
+
+    if (showPrep) {
+      const fullPhrase = getPrepositionPhraseFromExample(item.exampleDe, item.preposition!);
+      const inputVal = (st.prepositionInput || '').trim();
+      const isPrepOk = evaluateGermanAnswer(inputVal, item.preposition!) ||
+        (fullPhrase ? evaluateGermanAnswer(inputVal, fullPhrase) : false) ||
+        (fullPhrase ? inputVal.toLowerCase() === fullPhrase.toLowerCase() : false);
+      let isCaseOk = true;
+      if (item.prepositionCase) {
+        isCaseOk = (st.prepositionCaseSelected || '').trim().toLowerCase() === item.prepositionCase.trim().toLowerCase();
       }
-      return ok;
+      ok = ok && isPrepOk && isCaseOk;
     }
 
-    if (itemType === 'others') {
-      let ok = true;
-      if (settings.others.translation) {
-        ok = ok && st.selectedTranslation?.trim().toLowerCase() === correctTrans;
-      }
-      return ok;
-    }
-
-    return false;
+    return ok;
   };
 
   const correctCount = sessionItems.filter(isItemCorrect).length;
@@ -778,10 +824,20 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   sessionItems.forEach(it => {
     const st = answers[it.id];
     if (!st) return;
-    const itemType = getNormalizedType(it);
+    const normType = getNormalizedType(it);
+    const isNoun = normType === 'noun';
+    const isVerb = normType === 'verb';
+    const isAdj = normType === 'adjective';
+    const isExpr = normType === 'expression';
 
     // 1. Translation Question
-    if (st.translationChecked) {
+    const showTrans = isNoun ? settings.nouns.translation :
+      isVerb ? settings.verbs.translation :
+      isAdj ? settings.adjectives.translation :
+      isExpr ? (settings.expressions?.translation ?? true) :
+      settings.others.translation;
+
+    if (showTrans && st.translationChecked) {
       totalQuestionsAnswered += 1;
       const target = (it.translationEn || it.translationAr || '').trim().toLowerCase();
       if (st.selectedTranslation?.trim().toLowerCase() === target) {
@@ -790,7 +846,8 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     }
 
     // 2. Article Question
-    if (st.articleChecked) {
+    const hasArticle = isNoun && Boolean(it.gender && (it.gender === 'der' || it.gender === 'die' || it.gender === 'das'));
+    if (hasArticle && settings.nouns.article && st.articleChecked) {
       totalQuestionsAnswered += 1;
       if (st.selectedArticle === it.gender) {
         totalQuestionsCorrect += 1;
@@ -798,15 +855,16 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     }
 
     // 3. Plural Question
-    if (st.pluralChecked) {
+    const hasPlural = isNoun && Boolean(it.plural && it.plural.trim() && !it.plural.toLowerCase().includes('ohne plural') && !it.plural.toLowerCase().includes('kein plural') && it.plural.trim() !== '-');
+    if (hasPlural && settings.nouns.plural && st.pluralChecked) {
       totalQuestionsAnswered += 1;
       if (evaluatePluralAnswer(st.pluralInput || '', it.plural)) {
         totalQuestionsCorrect += 1;
       }
     }
 
-    // 4. Verb Conjugations (each requested conjugation counts as a question)
-    if (st.verbChecked && itemType === 'verb') {
+    // 4. Verb Conjugations
+    if (isVerb && st.verbChecked) {
       const hasPres = Boolean(it.present3rd && it.present3rd.trim());
       const hasPraet = Boolean(it.praeteritum && it.praeteritum.trim());
       const hasPerf = Boolean(it.perfekt && it.perfekt.trim());
@@ -831,17 +889,23 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
       }
     }
 
-    // 5. Antonyms
-    if (st.antonymChecked) {
+    // 5. Antonyms (only if antonym is present on item)
+    const hasAntonym = Boolean(it.antonym && it.antonym.trim());
+    const showAntonym = hasAntonym && (isAdj ? settings.adjectives.antonym : true);
+    if (showAntonym && st.antonymChecked) {
       totalQuestionsAnswered += 1;
-      const target = (it.antonym || getFallbackAntonym(it.word)).trim().toLowerCase();
+      const target = it.antonym!.trim().toLowerCase();
       if (st.selectedAntonym?.trim().toLowerCase() === target) {
         totalQuestionsCorrect += 1;
       }
     }
 
     // 6. Preposition & Case
-    if (st.prepositionChecked && it.preposition && it.preposition.trim()) {
+    const hasPrep = Boolean(it.preposition && it.preposition.trim());
+    const isPrepEnabled = isVerb ? (settings.verbs.prepositionCase ?? true) :
+      isExpr ? (settings.expressions?.prepositionCase ?? true) :
+      true;
+    if (hasPrep && isPrepEnabled && st.prepositionChecked) {
       const fullPhrase = getPrepositionPhraseFromExample(it.exampleDe, it.preposition);
       const inputVal = (st.prepositionInput || '').trim();
       const isPrepOk = evaluateGermanAnswer(inputVal, it.preposition) ||
@@ -1026,13 +1090,13 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
     }
   };
 
-  // 4. ADJECTIVE ANTONYM CHECK
+  // 4. ANTONYM CHECK
   const handleAntonymClick = (item: VocabItem, selectedChoice: string) => {
     const qState = answers[item.id] || {};
     if (qState.antonymChecked) return;
 
-    const correctAntonym = item.antonym || getFallbackAntonym(item.word);
-    const isCorrect = selectedChoice.trim().toLowerCase() === correctAntonym.trim().toLowerCase();
+    const correctAntonym = (item.antonym || '').trim();
+    const isCorrect = selectedChoice.trim().toLowerCase() === correctAntonym.toLowerCase();
 
     updateAnswerField(item.id, {
       selectedAntonym: selectedChoice,
@@ -1294,15 +1358,29 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
               return st.selectedTranslation?.trim().toLowerCase() === target;
             }).length;
 
-            const articleAns = sessionItems.filter(it => answers[it.id]?.articleChecked).length;
+            const articleAns = sessionItems.filter(it => {
+              const isNoun = getNormalizedType(it) === 'noun';
+              const hasArticle = isNoun && Boolean(it.gender && (it.gender === 'der' || it.gender === 'die' || it.gender === 'das'));
+              return hasArticle && answers[it.id]?.articleChecked;
+            }).length;
             const articleCorr = sessionItems.filter(it => {
+              const isNoun = getNormalizedType(it) === 'noun';
+              const hasArticle = isNoun && Boolean(it.gender && (it.gender === 'der' || it.gender === 'die' || it.gender === 'das'));
+              if (!hasArticle) return false;
               const st = answers[it.id];
               if (!st?.articleChecked) return false;
               return st.selectedArticle === it.gender;
             }).length;
 
-            const pluralAns = sessionItems.filter(it => answers[it.id]?.pluralChecked).length;
+            const pluralAns = sessionItems.filter(it => {
+              const isNoun = getNormalizedType(it) === 'noun';
+              const hasPlural = isNoun && Boolean(it.plural && it.plural.trim() && !it.plural.toLowerCase().includes('ohne plural') && !it.plural.toLowerCase().includes('kein plural') && it.plural.trim() !== '-');
+              return hasPlural && answers[it.id]?.pluralChecked;
+            }).length;
             const pluralCorr = sessionItems.filter(it => {
+              const isNoun = getNormalizedType(it) === 'noun';
+              const hasPlural = isNoun && Boolean(it.plural && it.plural.trim() && !it.plural.toLowerCase().includes('ohne plural') && !it.plural.toLowerCase().includes('kein plural') && it.plural.trim() !== '-');
+              if (!hasPlural) return false;
               const st = answers[it.id];
               if (!st?.pluralChecked) return false;
               return evaluatePluralAnswer(st.pluralInput || '', it.plural);
@@ -1331,11 +1409,16 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
               }
             });
 
-            const antonymAns = sessionItems.filter(it => answers[it.id]?.antonymChecked).length;
+            const antonymAns = sessionItems.filter(it => {
+              const hasAntonym = Boolean(it.antonym && it.antonym.trim());
+              return hasAntonym && answers[it.id]?.antonymChecked;
+            }).length;
             const antonymCorr = sessionItems.filter(it => {
+              const hasAntonym = Boolean(it.antonym && it.antonym.trim());
+              if (!hasAntonym) return false;
               const st = answers[it.id];
               if (!st?.antonymChecked) return false;
-              const target = (it.antonym || getFallbackAntonym(it.word)).trim().toLowerCase();
+              const target = it.antonym!.trim().toLowerCase();
               return st.selectedAntonym?.trim().toLowerCase() === target;
             }).length;
 
@@ -1492,13 +1575,33 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
 
                 const liveMasteryScore = vocabList.find(v => v.id === item.id)?.masteryScore ?? item.masteryScore ?? 0;
 
-                const hasPres = Boolean(item.present3rd && item.present3rd.trim());
-                const hasPraet = Boolean(item.praeteritum && item.praeteritum.trim());
-                const hasPerf = Boolean(item.perfekt && item.perfekt.trim());
+                const showTrans = isNoun ? settings.nouns.translation :
+                  isVerb ? settings.verbs.translation :
+                  isAdj ? settings.adjectives.translation :
+                  isExpr ? (settings.expressions?.translation ?? true) :
+                  settings.others.translation;
+
+                const hasArticle = isNoun && Boolean(item.gender && (item.gender === 'der' || item.gender === 'die' || item.gender === 'das'));
+                const showArticle = hasArticle && settings.nouns.article;
+
+                const hasPlural = isNoun && Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural') && item.plural.trim() !== '-');
+                const showPlural = hasPlural && settings.nouns.plural;
+
+                const hasPres = isVerb && Boolean(item.present3rd && item.present3rd.trim());
+                const hasPraet = isVerb && Boolean(item.praeteritum && item.praeteritum.trim());
+                const hasPerf = isVerb && Boolean(item.perfekt && item.perfekt.trim());
                 const showVerbConjugations = isVerb && ((settings.verbs.present3rd && hasPres) || (settings.verbs.praeteritum && hasPraet) || (settings.verbs.perfekt && hasPerf));
 
+                const hasAntonym = Boolean(item.antonym && item.antonym.trim());
+                const showAntonym = hasAntonym && (isAdj ? settings.adjectives.antonym : true);
+
+                const hasPrep = Boolean(item.preposition && item.preposition.trim());
+                const isPrepEnabled = isVerb ? (settings.verbs.prepositionCase ?? true) :
+                  isExpr ? (settings.expressions?.prepositionCase ?? true) :
+                  true;
+                const showPrep = hasPrep && isPrepEnabled;
+
                 const isArticleCorrect = item.gender ? qState.selectedArticle === item.gender : true;
-                const hasPlural = Boolean(item.plural && item.plural.trim() && !item.plural.toLowerCase().includes('ohne plural') && !item.plural.toLowerCase().includes('kein plural'));
                 const isPluralCorrect = hasPlural
                   ? evaluatePluralAnswer(qState.pluralInput || '', item.plural!)
                   : true;
@@ -1506,6 +1609,9 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                 const isPresCorrect = hasPres ? evaluateGermanAnswer(qState.present3rdInput || '', item.present3rd!) : true;
                 const isPraetCorrect = hasPraet ? evaluateGermanAnswer(qState.praeteritumInput || '', item.praeteritum!) : true;
                 const isPerfCorrect = hasPerf ? evaluateGermanAnswer(qState.perfektInput || '', item.perfekt!, true) : true;
+
+                const totalEnabledQuestions = (showTrans ? 1 : 0) + (showArticle ? 1 : 0) + (showPlural ? 1 : 0) + (showVerbConjugations ? 1 : 0) + (showAntonym ? 1 : 0) + (showPrep ? 1 : 0);
+                let sectionNumber = 0;
 
                 return (
                   <div
@@ -1564,424 +1670,34 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                       <span className="text-2xl font-black text-slate-900 dark:text-white">
                         {item.word}
                       </span>
-                      <AudioPlayer text={isNoun && item.gender ? `${item.gender} ${item.word}` : item.word} size="md" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Gray square button to open example sentence popup */}
+                        <button
+                          type="button"
+                          onClick={() => setActiveExampleItem(item)}
+                          title="عرض المثال التوضيحي • Beispielsatz anzeigen"
+                          className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-colors dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white p-1.5 cursor-pointer shadow-xs"
+                          aria-label="عرض المثال التوضيحي"
+                        >
+                          <Quote className="w-5 h-5" />
+                        </button>
+                        <AudioPlayer text={isNoun && item.gender ? `${item.gender} ${item.word}` : item.word} size="md" />
+                      </div>
                     </div>
 
-                    {/* EXERCISE TYPES: ADJECTIVE / NOUN / VERB / OTHERS */}
-                    {isAdj ? (
-                      /* ADJECTIVE EXERCISE: TRANSLATION & ANTONYM */
-                      <div className="space-y-4 pt-1">
-                        {/* 1. Translation Question */}
-                        {settings.adjectives.translation && (
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              {settings.adjectives.antonym ? '1. ' : ''}Select Translation for <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md dir-ltr">"{item.word}"</span>:
-                            </label>
+                    {/* EXERCISES: STRICTLY RESPECTING ENABLED SECTIONS */}
+                    <div className="space-y-4 pt-1">
+                      {totalEnabledQuestions === 0 && (
+                        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 text-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                          لا توجد أسئلة مفعلة لهذه المفردة حالياً (يمكنك تفعيل أقسام المفردة في شاشة التعديل أو إعدادات التدريب).
+                        </div>
+                      )}
 
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
-                              {getTranslationChoices(item, vocabList).map(choice => {
-                                const isSelected = qState.selectedTranslation === choice;
-                                const correctTranslation = (item.translationEn || item.translationAr || '').trim();
-                                const isTarget = choice.trim().toLowerCase() === correctTranslation.toLowerCase();
-
-                                let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
-
-                                if (qState.translationChecked) {
-                                  if (isTarget) {
-                                    styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
-                                  } else if (isSelected && !isTarget) {
-                                    styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
-                                  } else {
-                                    styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
-                                  }
-                                } else if (isSelected) {
-                                  styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
-                                }
-
-                                return (
-                                  <button
-                                    key={choice}
-                                    type="button"
-                                    disabled={qState.translationChecked}
-                                    onClick={() => handleTranslationClick(item, choice)}
-                                    className={`py-3 px-4 rounded-2xl border text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between gap-2 min-w-0 text-left ${styleClasses}`}
-                                  >
-                                    <span className="break-words leading-snug">{choice}</span>
-                                    {qState.translationChecked && isTarget && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
-                                    {qState.translationChecked && isSelected && !isTarget && <X className="w-4 h-4 stroke-[3] shrink-0" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 2. Antonym Question */}
-                        {settings.adjectives.antonym && (
-                          <div className={`space-y-2 ${settings.adjectives.translation ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              {settings.adjectives.translation ? '2. ' : ''}Select the Opposite (Antonym) of <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md dir-ltr">"{item.word}"</span>:
-                            </label>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
-                              {getAntonymChoices(item, vocabList).map(choice => {
-                                const isSelected = qState.selectedAntonym === choice;
-                                const correctAntonym = item.antonym || getFallbackAntonym(item.word);
-                                const isTarget = choice.trim().toLowerCase() === correctAntonym.trim().toLowerCase();
-
-                                let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
-
-                                if (qState.antonymChecked) {
-                                  if (isTarget) {
-                                    styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
-                                  } else if (isSelected && !isTarget) {
-                                    styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
-                                  } else {
-                                    styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
-                                  }
-                                } else if (isSelected) {
-                                  styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
-                                }
-
-                                return (
-                                  <button
-                                    key={choice}
-                                    type="button"
-                                    disabled={qState.antonymChecked}
-                                    onClick={() => handleAntonymClick(item, choice)}
-                                    className={`py-3 px-4 rounded-2xl border text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between gap-2 min-w-0 text-left ${styleClasses}`}
-                                  >
-                                    <span className="break-words leading-snug">{choice}</span>
-                                    {qState.antonymChecked && isTarget && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
-                                    {qState.antonymChecked && isSelected && !isTarget && <X className="w-4 h-4 stroke-[3] shrink-0" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : isNoun ? (
-                      <div className="space-y-4 pt-1">
-                        
-                        {/* 1. English Translation Question (3 options side-by-side) */}
-                        {settings.nouns.translation && (
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              1. Select English Translation for <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md dir-ltr">"{item.word}"</span>:
-                            </label>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 dir-ltr">
-                              {getTranslationChoices(item, vocabList).map(choice => {
-                                const isSelected = qState.selectedTranslation === choice;
-                                const correctTranslation = (item.translationEn || item.translationAr || '').trim();
-                                const isTarget = choice.trim().toLowerCase() === correctTranslation.toLowerCase();
-
-                                let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
-
-                                if (qState.translationChecked) {
-                                  if (isTarget) {
-                                    styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
-                                  } else if (isSelected && !isTarget) {
-                                    styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
-                                  } else {
-                                    styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
-                                  }
-                                } else if (isSelected) {
-                                  styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
-                                }
-
-                                return (
-                                  <button
-                                    key={choice}
-                                    type="button"
-                                    disabled={qState.translationChecked}
-                                    onClick={() => handleTranslationClick(item, choice)}
-                                    className={`py-2.5 px-3 rounded-xl border text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between gap-2 min-w-0 text-left ${styleClasses}`}
-                                  >
-                                    <span className="break-words leading-snug">{choice}</span>
-                                    {qState.translationChecked && isTarget && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
-                                    {qState.translationChecked && isSelected && !isTarget && <X className="w-4 h-4 stroke-[3] shrink-0" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 2. Artikel Selection */}
-                        {settings.nouns.article && (
-                          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              2. Select Article (Artikel):
-                            </label>
-                            <div className="grid grid-cols-3 gap-2.5 dir-ltr">
-                              {(['der', 'das', 'die'] as const).map(art => {
-                                const isSelected = qState.selectedArticle === art;
-                                const isTargetGender = item.gender === art;
-
-                                let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
-
-                                if (qState.articleChecked) {
-                                  if (isTargetGender) {
-                                    styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
-                                  } else if (isSelected && !isTargetGender) {
-                                    styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
-                                  } else {
-                                    styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
-                                  }
-                                } else if (isSelected) {
-                                  styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
-                                }
-
-                                return (
-                                  <button
-                                    key={art}
-                                    type="button"
-                                    onClick={() => handleArticleClick(item, art)}
-                                    className={`py-2.5 px-3 rounded-2xl border text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${styleClasses}`}
-                                  >
-                                    <span>{art}</span>
-                                    {qState.articleChecked && isTargetGender && <Check className="w-4 h-4 stroke-[3]" />}
-                                    {qState.articleChecked && isSelected && !isTargetGender && <X className="w-4 h-4 stroke-[3]" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 3. Plural Input + "Check" button */}
-                        {settings.nouns.plural && hasPlural && (
-                          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              3. Enter Plural Form (Plural):
-                            </label>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                disabled={qState.pluralChecked}
-                                value={qState.pluralInput || ''}
-                                onChange={e => updateAnswerField(item.id, { pluralInput: e.target.value })}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handlePluralCheck(item);
-                                }}
-                                placeholder="e.g. die Tische..."
-                                className={`grow p-3 rounded-2xl border text-xs sm:text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr ${
-                                  qState.pluralChecked
-                                    ? isPluralCorrect
-                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400 font-black'
-                                      : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400 font-black'
-                                    : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
-                                }`}
-                              />
-
-                              {!qState.pluralChecked ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handlePluralCheck(item)}
-                                  className="px-5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl text-xs cursor-pointer shrink-0 flex items-center gap-1.5"
-                                >
-                                  <Check className="w-4 h-4" />
-                                  <span>Check</span>
-                                </button>
-                              ) : (
-                                <div className={`px-4 rounded-2xl flex items-center justify-center shrink-0 border font-black text-xs ${
-                                  isPluralCorrect
-                                    ? 'bg-emerald-100 dark:bg-emerald-950 border-emerald-300 dark:border-emerald-800'
-                                    : 'bg-rose-100 dark:bg-rose-950 border-rose-300 dark:border-rose-800'
-                                }`}>
-                                  {isPluralCorrect ? (
-                                    <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-                                      <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 stroke-[2.5]" />
-                                      <span>Correct</span>
-                                    </span>
-                                  ) : (
-                                    <span className="flex items-center gap-1 text-rose-700 dark:text-rose-300">
-                                      <AlertCircle className="w-4.5 h-4.5 text-rose-600 stroke-[2.5]" />
-                                      <span>Incorrect</span>
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-
-                            {qState.pluralChecked && !isPluralCorrect && item.plural && (
-                              <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 block px-1">
-                                Correct: <span className="font-extrabold dir-ltr">{item.plural}</span>
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                      </div>
-                    ) : isVerb ? (
-                      /* VERB EXERCISE */
-                      <div className="space-y-4 pt-1">
-                        {/* 1. English Translation Question (3 options side-by-side) */}
-                        {settings.verbs.translation && (
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              1. Select English Translation for <span className="text-emerald-600 dark:text-emerald-400 font-black px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950 rounded-md dir-ltr">"{item.word}"</span>:
-                            </label>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 dir-ltr">
-                              {getTranslationChoices(item, vocabList).map(choice => {
-                                const isSelected = qState.selectedTranslation === choice;
-                                const correctTranslation = (item.translationEn || item.translationAr || '').trim();
-                                const isTarget = choice.trim().toLowerCase() === correctTranslation.toLowerCase();
-
-                                let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50/50';
-
-                                if (qState.translationChecked) {
-                                  if (isTarget) {
-                                    styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
-                                  } else if (isSelected && !isTarget) {
-                                    styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
-                                  } else {
-                                    styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
-                                  }
-                                } else if (isSelected) {
-                                  styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black';
-                                }
-
-                                return (
-                                  <button
-                                    key={choice}
-                                    type="button"
-                                    disabled={qState.translationChecked}
-                                    onClick={() => handleTranslationClick(item, choice)}
-                                    className={`py-2.5 px-3 rounded-xl border text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between gap-2 min-w-0 text-left ${styleClasses}`}
-                                  >
-                                    <span className="break-words leading-snug">{choice}</span>
-                                    {qState.translationChecked && isTarget && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
-                                    {qState.translationChecked && isSelected && !isTarget && <X className="w-4 h-4 stroke-[3] shrink-0" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 2. Verb Conjugations */}
-                        {showVerbConjugations && (
-                          <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                              2. Verb Forms & Conjugations:
-                            </span>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 dir-ltr">
-                              {/* Present 3rd */}
-                              {settings.verbs.present3rd && hasPres && (
-                                <div className="space-y-1">
-                                  <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
-                                    Present (er/sie/es):
-                                  </span>
-                                  <input
-                                    type="text"
-                                    disabled={qState.verbChecked}
-                                    value={qState.present3rdInput || ''}
-                                    onChange={e => updateAnswerField(item.id, { present3rdInput: e.target.value })}
-                                    placeholder="e.g. sieht"
-                                    className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
-                                      qState.verbChecked
-                                        ? isPresCorrect
-                                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400'
-                                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400'
-                                        : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
-                                    }`}
-                                  />
-                                  {qState.verbChecked && !isPresCorrect && (
-                                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {item.present3rd}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Praeteritum */}
-                              {settings.verbs.praeteritum && hasPraet && (
-                                <div className="space-y-1">
-                                  <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
-                                    Past (Präteritum):
-                                  </span>
-                                  <input
-                                    type="text"
-                                    disabled={qState.verbChecked}
-                                    value={qState.praeteritumInput || ''}
-                                    onChange={e => updateAnswerField(item.id, { praeteritumInput: e.target.value })}
-                                    placeholder="e.g. sah"
-                                    className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
-                                      qState.verbChecked
-                                        ? isPraetCorrect
-                                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400'
-                                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400'
-                                        : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
-                                    }`}
-                                  />
-                                  {qState.verbChecked && !isPraetCorrect && (
-                                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {item.praeteritum}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Perfekt */}
-                              {settings.verbs.perfekt && hasPerf && (
-                                <div className="space-y-1">
-                                  <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
-                                    Perfect (Perfekt):
-                                  </span>
-                                  <input
-                                    type="text"
-                                    disabled={qState.verbChecked}
-                                    value={qState.perfektInput || ''}
-                                    onChange={e => updateAnswerField(item.id, { perfektInput: e.target.value })}
-                                    placeholder="e.g. hat gesehen"
-                                    className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
-                                      qState.verbChecked
-                                        ? isPerfCorrect
-                                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400'
-                                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400'
-                                        : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
-                                    }`}
-                                  />
-                                  {qState.verbChecked && !isPerfCorrect && (
-                                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
-                                      Correct: {item.perfekt}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-
-                            {!qState.verbChecked ? (
-                              <div className="flex justify-end pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleVerbCheck(item)}
-                                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl text-xs cursor-pointer flex items-center gap-2"
-                                >
-                                  <Check className="w-4 h-4" />
-                                  <span>Check Verb Conjugations</span>
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex justify-end pt-1">
-                                <span className="p-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-                                  <CheckCircle2 className="w-5 h-5" />
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      /* OTHERS / EXPRESSION EXERCISE: 3 MULTIPLE CHOICE TRANSLATION OPTIONS */
-                      ((normType === 'expression') ? (settings.expressions?.translation ?? true) : settings.others.translation) ? (
-                        <div className="space-y-3 pt-1">
+                      {/* 1. Translation Question */}
+                      {showTrans && (
+                        <div className="space-y-2">
                           <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                            Select the correct translation for <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md">"{item.word}"</span>:
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Select Translation for <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md dir-ltr">"{item.word}"</span>:
                           </label>
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
@@ -2020,15 +1736,277 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                             })}
                           </div>
                         </div>
-                      ) : null
-                    )}
+                      )}
+
+                      {/* 2. Article Selection (Noun Properties) */}
+                      {showArticle && (
+                        <div className={`space-y-2 ${sectionNumber > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
+                          <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Select Article (Artikel):
+                          </label>
+
+                          <div className="grid grid-cols-3 gap-2.5 dir-ltr">
+                            {(['der', 'die', 'das'] as const).map(art => {
+                              const isSelected = qState.selectedArticle === art;
+                              const isTargetGender = item.gender === art;
+
+                              let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
+
+                              if (qState.articleChecked) {
+                                if (isTargetGender) {
+                                  styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
+                                } else if (isSelected && !isTargetGender) {
+                                  styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
+                                } else {
+                                  styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
+                                }
+                              } else if (isSelected) {
+                                styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
+                              }
+
+                              return (
+                                <button
+                                  key={art}
+                                  type="button"
+                                  disabled={qState.articleChecked}
+                                  onClick={() => handleArticleClick(item, art)}
+                                  className={`py-2.5 px-3 rounded-2xl border text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${styleClasses}`}
+                                >
+                                  <span>{art}</span>
+                                  {qState.articleChecked && isTargetGender && <Check className="w-4 h-4 stroke-[3]" />}
+                                  {qState.articleChecked && isSelected && !isTargetGender && <X className="w-4 h-4 stroke-[3]" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3. Plural Form (Noun Properties) */}
+                      {showPlural && (
+                        <div className={`space-y-2 ${sectionNumber > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
+                          <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Enter Plural Form (Plural):
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              disabled={qState.pluralChecked}
+                              value={qState.pluralInput || ''}
+                              onChange={e => updateAnswerField(item.id, { pluralInput: e.target.value })}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handlePluralCheck(item);
+                              }}
+                              placeholder="e.g. die Tische..."
+                              className={`grow p-3 rounded-2xl border text-xs sm:text-sm font-extrabold focus:outline-none focus:ring-2 focus:ring-blue-500 dir-ltr ${
+                                qState.pluralChecked
+                                  ? isPluralCorrect
+                                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400 font-black'
+                                    : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400 font-black'
+                                  : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+                              }`}
+                            />
+
+                            {!qState.pluralChecked ? (
+                              <button
+                                type="button"
+                                onClick={() => handlePluralCheck(item)}
+                                className="px-5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl text-xs cursor-pointer shrink-0 flex items-center gap-1.5"
+                              >
+                                <Check className="w-4 h-4" />
+                                <span>Check</span>
+                              </button>
+                            ) : (
+                              <div className={`px-4 rounded-2xl flex items-center justify-center shrink-0 border font-black text-xs ${
+                                isPluralCorrect
+                                  ? 'bg-emerald-100 dark:bg-emerald-950 border-emerald-300 dark:border-emerald-800'
+                                  : 'bg-rose-100 dark:bg-rose-950 border-rose-300 dark:border-rose-800'
+                              }`}>
+                                {isPluralCorrect ? (
+                                  <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                                    <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 stroke-[2.5]" />
+                                    <span>Correct</span>
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1 text-rose-700 dark:text-rose-300">
+                                    <AlertCircle className="w-4.5 h-4.5 text-rose-600 stroke-[2.5]" />
+                                    <span>Incorrect</span>
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {qState.pluralChecked && !isPluralCorrect && item.plural && (
+                            <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 block px-1">
+                              Correct: <span className="font-extrabold dir-ltr">{item.plural}</span>
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 4. Verb Conjugations */}
+                      {showVerbConjugations && (
+                        <div className={`space-y-3 ${sectionNumber > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
+                          <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Verb Forms & Conjugations (تصريف الفعل):
+                          </label>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 dir-ltr">
+                            {/* Present 3rd */}
+                            {settings.verbs.present3rd && hasPres && (
+                              <div className="space-y-1">
+                                <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
+                                  Present (er/sie/es):
+                                </span>
+                                <input
+                                  type="text"
+                                  disabled={qState.verbChecked}
+                                  value={qState.present3rdInput || ''}
+                                  onChange={e => updateAnswerField(item.id, { present3rdInput: e.target.value })}
+                                  placeholder="e.g. geht"
+                                  className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
+                                    qState.verbChecked
+                                      ? isPresCorrect
+                                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400 font-black'
+                                        : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400 font-black'
+                                      : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+                                  }`}
+                                />
+                                {qState.verbChecked && !isPresCorrect && (
+                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
+                                    Correct: {item.present3rd}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Praeteritum */}
+                            {settings.verbs.praeteritum && hasPraet && (
+                              <div className="space-y-1">
+                                <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
+                                  Past (Präteritum):
+                                </span>
+                                <input
+                                  type="text"
+                                  disabled={qState.verbChecked}
+                                  value={qState.praeteritumInput || ''}
+                                  onChange={e => updateAnswerField(item.id, { praeteritumInput: e.target.value })}
+                                  placeholder="e.g. ging"
+                                  className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
+                                    qState.verbChecked
+                                      ? isPraetCorrect
+                                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400 font-black'
+                                        : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400 font-black'
+                                      : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+                                  }`}
+                                />
+                                {qState.verbChecked && !isPraetCorrect && (
+                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
+                                    Correct: {item.praeteritum}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Perfekt */}
+                            {settings.verbs.perfekt && hasPerf && (
+                              <div className="space-y-1">
+                                <span className="text-[11px] font-extrabold text-slate-600 dark:text-slate-400 block text-left">
+                                  Perfect (Perfekt):
+                                </span>
+                                <input
+                                  type="text"
+                                  disabled={qState.verbChecked}
+                                  value={qState.perfektInput || ''}
+                                  onChange={e => updateAnswerField(item.id, { perfektInput: e.target.value })}
+                                  placeholder="e.g. ist gegangen"
+                                  className={`w-full p-2.5 rounded-2xl border text-xs font-extrabold ${
+                                    qState.verbChecked
+                                      ? isPerfCorrect
+                                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 border-emerald-400 font-black'
+                                        : 'bg-rose-50 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 border-rose-400 font-black'
+                                      : 'bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+                                  }`}
+                                />
+                                {qState.verbChecked && !isPerfCorrect && (
+                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block">
+                                    Correct: {item.perfekt}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {!qState.verbChecked ? (
+                            <div className="flex justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleVerbCheck(item)}
+                                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl text-xs cursor-pointer flex items-center gap-2"
+                              >
+                                <Check className="w-4 h-4" />
+                                <span>Check Verb Conjugations</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end pt-1">
+                              <span className="p-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+                                <CheckCircle2 className="w-5 h-5" />
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 5. Antonym Question */}
+                      {showAntonym && (
+                        <div className={`space-y-2 ${sectionNumber > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
+                          <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Select the Opposite (Antonym) of <span className="text-blue-600 dark:text-blue-400 font-black px-1.5 py-0.5 bg-blue-50 dark:bg-blue-950 rounded-md dir-ltr">"{item.word}"</span>:
+                          </label>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 dir-ltr">
+                            {getAntonymChoices(item, vocabList).map(choice => {
+                              const isSelected = qState.selectedAntonym === choice;
+                              const correctAntonym = (item.antonym || '').trim();
+                              const isTarget = choice.trim().toLowerCase() === correctAntonym.toLowerCase();
+
+                              let styleClasses = 'bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50';
+
+                              if (qState.antonymChecked) {
+                                if (isTarget) {
+                                  styleClasses = 'bg-emerald-600 text-white border-emerald-600 font-black shadow-xs';
+                                } else if (isSelected && !isTarget) {
+                                  styleClasses = 'bg-rose-600 text-white border-rose-600 font-black';
+                                } else {
+                                  styleClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-800 opacity-40';
+                                }
+                              } else if (isSelected) {
+                                styleClasses = 'bg-blue-600 text-white border-blue-600 font-black';
+                              }
+
+                              return (
+                                <button
+                                  key={choice}
+                                  type="button"
+                                  disabled={qState.antonymChecked}
+                                  onClick={() => handleAntonymClick(item, choice)}
+                                  className={`py-3 px-4 rounded-2xl border text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between gap-2 min-w-0 text-left ${styleClasses}`}
+                                >
+                                  <span className="break-words leading-snug">{choice}</span>
+                                  {qState.antonymChecked && isTarget && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
+                                  {qState.antonymChecked && isSelected && !isTarget && <X className="w-4 h-4 stroke-[3] shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Sentence Completion Question Block for items with Prepositions */}
-                    {item.preposition && (
-                      normType === 'verb' ? (settings.verbs.prepositionCase ?? true) :
-                      normType === 'expression' ? (settings.expressions?.prepositionCase ?? true) :
-                      true
-                    ) && (() => {
+                    {showPrep && (() => {
                       const prepChoices = getPrepositionChoices(item);
                       const inputVal = (qState.prepositionInput || '').trim();
                       const selectedCase = qState.prepositionCaseSelected || '';
@@ -2040,9 +2018,9 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                       const isOverallOk = isPrepOk && isCaseOk;
 
                       return (
-                        <div className="space-y-3.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+                        <div className={`space-y-3.5 ${sectionNumber > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-800' : ''}`}>
                           <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                            Sentence Completion (Preposition & Grammatical Case):
+                            {totalEnabledQuestions > 1 ? `${++sectionNumber}. ` : ''}Sentence Completion (Preposition & Grammatical Case):
                           </label>
 
                           {/* Prompt Sentence with Blank */}
@@ -2254,6 +2232,58 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------- */}
+      {/* EXAMPLE SENTENCE POPUP MODAL (MINIMAL & SIMPLE) */}
+      {/* ------------------------------------------------------------------- */}
+      {activeExampleItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in"
+          onClick={() => setActiveExampleItem(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-2xl p-4 max-w-sm w-full shadow-xl border border-slate-200 dark:border-slate-800 space-y-2.5 animate-fade-in"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header: minimal label + close icon */}
+            <div className="flex items-center justify-between text-xs font-bold text-slate-400 dark:text-slate-500">
+              <span className="flex items-center gap-1.5 uppercase text-[11px] tracking-wide">
+                <Quote className="w-3.5 h-3.5 text-slate-400" />
+                <span>Beispiel</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveExampleItem(null)}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Example sentence only */}
+            {(() => {
+              const example = getDisplayExample(activeExampleItem);
+              return (
+                <div className="space-y-2 pt-0.5">
+                  <div className="flex items-start justify-between gap-2.5">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 leading-relaxed dir-ltr flex-1">
+                      {example.de}
+                    </p>
+                    <AudioPlayer text={example.de} size="sm" className="shrink-0 mt-0.5" />
+                  </div>
+
+                  {example.ar && (
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 dir-rtl text-right pt-1.5 border-t border-slate-100 dark:border-slate-800/80">
+                      {example.ar}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
