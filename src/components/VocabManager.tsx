@@ -435,13 +435,13 @@ const VocabCard: React.FC<VocabCardProps> = ({
 /* ------------------------------------------------------------------- */
 /* VOCAB EDIT MODAL COMPONENT */
 /* ------------------------------------------------------------------- */
-interface VocabEditModalProps {
+export interface VocabEditModalProps {
   item: VocabItem;
   onSave: (updatedItem: VocabItem) => void;
   onClose: () => void;
 }
 
-const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }) => {
+export const VocabEditModal: React.FC<VocabEditModalProps> = ({ item, onSave, onClose }) => {
   const [wordType, setWordType] = useState<VocabType>(item.type || 'noun');
   const [word, setWord] = useState<string>(item.word || '');
   const [translationEn, setTranslationEn] = useState<string>(item.translationEn || '');

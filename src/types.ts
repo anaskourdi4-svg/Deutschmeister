@@ -121,6 +121,9 @@ export interface QuizQuestionSettings {
   others: {
     translation: boolean;
   };
+  cardOptions?: {
+    showEditButton?: boolean;
+  };
 }
 
 export const DEFAULT_QUIZ_SETTINGS: QuizQuestionSettings = {
@@ -146,6 +149,9 @@ export const DEFAULT_QUIZ_SETTINGS: QuizQuestionSettings = {
   },
   others: {
     translation: true,
+  },
+  cardOptions: {
+    showEditButton: true,
   },
 };
 

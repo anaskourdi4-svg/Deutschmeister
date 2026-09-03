@@ -23,8 +23,7 @@ import {
   FolderKanban,
   PlusCircle,
   Sparkles,
-  ArrowUpDown,
-  X
+  ArrowUpDown
 } from 'lucide-react';
 
 interface HeaderProps {

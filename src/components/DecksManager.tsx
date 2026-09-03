@@ -85,8 +85,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   // Transfer Deck Items state
   const [transferringDeck, setTransferringDeck] = useState<VocabSet | null>(null);
   const [targetTransferSetId, setTargetTransferSetId] = useState<string>('');
-  const [targetSearchQuery, setTargetSearchQuery] = useState<string>('');
   const [targetGroupFilter, setTargetGroupFilter] = useState<string>('all');
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
 
   // Clear Deck Items state
   const [clearingDeck, setClearingDeck] = useState<VocabSet | null>(null);
@@ -533,7 +533,10 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
 
       {/* Transfer Words to Another Deck Modal */}
       {transferringDeck && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in"
+          onClick={() => setTransferringDeck(null)}
+        >
           <div
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]"
             onClick={e => e.stopPropagation()}
@@ -558,19 +561,31 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
             </div>
 
             {/* Source Deck Info */}
-            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between shrink-0">
-              <div className="min-w-0 pr-2">
-                <span className="text-[10px] uppercase font-extrabold text-slate-400 block">Source Deck</span>
-                <span className="text-xs font-black text-slate-800 dark:text-slate-100 truncate block">{transferringDeck.name}</span>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5 block">
-                  {transferringDeck.items?.length || 0} words
-                </span>
-              </div>
-              <div className="text-right shrink-0">
-                <span className="text-[10px] uppercase font-extrabold text-slate-400 block">Group</span>
-                <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{getDeckGroup(transferringDeck)}</span>
-              </div>
-            </div>
+            {(() => {
+              const srcGrp = getDeckGroup(transferringDeck);
+              const srcGrpMeta = GROUPS_LIST.find(g => g.id === srcGrp) || GROUPS_LIST[5];
+              return (
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <FolderKanban className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                    <span>Source Deck</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2.5 flex-wrap">
+                    <span className="text-sm font-black text-slate-900 dark:text-white truncate max-w-[280px]">
+                      {transferringDeck.name}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700/80 px-2.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-600">
+                        {transferringDeck.items?.length || 0} words
+                      </span>
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${srcGrpMeta.badgeClass}`}>
+                        {srcGrpMeta.name}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {(!transferringDeck.items || transferringDeck.items.length === 0) ? (
               <div className="p-4 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-2xl text-center space-y-2">
@@ -580,7 +595,10 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={() => setTransferringDeck(null)}
+                  onClick={() => {
+                    setTransferringDeck(null);
+                    setShowTransferConfirm(false);
+                  }}
                   className="px-4 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold rounded-xl cursor-pointer"
                 >
                   Close
@@ -588,83 +606,59 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
               </div>
             ) : (
               <div className="flex-1 flex flex-col min-h-0 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between shrink-0">
                   <label className="text-xs font-black text-slate-700 dark:text-slate-300 block">
                     Select Target Deck:
                   </label>
                   {targetTransferSetId && (
-                    <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 truncate max-w-[200px]">
+                    <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 truncate max-w-[220px]">
                       Selected: {vocabSets.find(s => s.id === targetTransferSetId)?.name}
                     </span>
                   )}
                 </div>
 
-                {/* Target Search & Group Pills */}
-                <div className="space-y-2 shrink-0">
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search target deck..."
-                      value={targetSearchQuery}
-                      onChange={e => setTargetSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    {targetSearchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setTargetSearchQuery('')}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Level group filter buttons */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                {/* Level group filter buttons - wraps to next line */}
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTargetGroupFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold shrink-0 cursor-pointer transition-colors ${
+                      targetGroupFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    All Decks
+                  </button>
+                  {GROUPS_LIST.map(grp => (
                     <button
+                      key={grp.id}
                       type="button"
-                      onClick={() => setTargetGroupFilter('all')}
+                      onClick={() => setTargetGroupFilter(grp.id)}
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold shrink-0 cursor-pointer transition-colors ${
-                        targetGroupFilter === 'all'
-                          ? 'bg-indigo-600 text-white'
+                        targetGroupFilter === grp.id
+                          ? 'bg-indigo-600 text-white shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      All Decks
+                      {grp.id}
                     </button>
-                    {GROUPS_LIST.map(grp => (
-                      <button
-                        key={grp.id}
-                        type="button"
-                        onClick={() => setTargetGroupFilter(grp.id)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold shrink-0 cursor-pointer transition-colors ${
-                          targetGroupFilter === grp.id
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        {grp.id}
-                      </button>
-                    ))}
-                  </div>
+                  ))}
                 </div>
 
-                {/* Target Deck Interactive List */}
+                {/* Target Deck Interactive List - Expanded height without disclaimer */}
                 {(() => {
                   const availableDecks = vocabSets.filter(s => {
                     if (s.id === transferringDeck.id) return false;
                     if (targetGroupFilter !== 'all' && getDeckGroup(s) !== targetGroupFilter) return false;
-                    if (targetSearchQuery.trim() && !s.name.toLowerCase().includes(targetSearchQuery.toLowerCase())) return false;
                     return true;
                   });
 
                   return (
-                    <div className="flex-1 overflow-y-auto max-h-48 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 bg-slate-50/50 dark:bg-slate-800/30 p-1">
+                    <div className="flex-1 overflow-y-auto min-h-[220px] max-h-72 rounded-2xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 bg-slate-50/50 dark:bg-slate-800/30 p-1.5 space-y-1 shadow-inner">
                       {availableDecks.length === 0 ? (
-                        <div className="py-8 text-center text-xs text-slate-400 font-medium">
-                          No matching decks found
+                        <div className="py-12 text-center text-xs text-slate-400 font-medium">
+                          No decks available in this group
                         </div>
                       ) : (
                         availableDecks.map(deck => {
@@ -675,13 +669,13 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                             <div
                               key={deck.id}
                               onClick={() => setTargetTransferSetId(deck.id)}
-                              className={`p-2.5 rounded-lg flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                              className={`p-3 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-all duration-150 ${
                                 isSelected
-                                  ? 'bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-300 dark:border-indigo-700 shadow-xs'
-                                  : 'hover:bg-white dark:hover:bg-slate-800 border border-transparent'
+                                  ? 'bg-indigo-50/90 dark:bg-indigo-950/80 border border-indigo-400 dark:border-indigo-600 shadow-xs ring-1 ring-indigo-500/20'
+                                  : 'hover:bg-white dark:hover:bg-slate-800/80 border border-transparent hover:border-slate-200 dark:hover:border-slate-700'
                               }`}
                             >
-                              <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex items-center gap-3 min-w-0">
                                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
                                   isSelected
                                     ? 'bg-indigo-600 border-indigo-600 text-white'
@@ -709,14 +703,13 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   );
                 })()}
 
-                <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-2xl text-xs text-indigo-900 dark:text-indigo-200 leading-relaxed font-medium shrink-0">
-                  All <strong className="font-black">{transferringDeck.items?.length || 0} words</strong> will be moved to the target deck. Duplicate entries will be automatically filtered, and this deck will be cleared.
-                </div>
-
                 <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setTransferringDeck(null)}
+                    onClick={() => {
+                      setTransferringDeck(null);
+                      setShowTransferConfirm(false);
+                    }}
                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-colors"
                   >
                     Cancel
@@ -724,16 +717,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   <button
                     type="button"
                     disabled={!targetTransferSetId || targetTransferSetId === transferringDeck.id}
-                    onClick={() => {
-                      if (onTransferDeckItems && transferringDeck && targetTransferSetId) {
-                        const targetDeck = vocabSets.find(s => s.id === targetTransferSetId);
-                        const count = transferringDeck.items?.length || 0;
-                        onTransferDeckItems(transferringDeck.id, targetTransferSetId);
-                        setImportNotice(`Transferred ${count} words from "${transferringDeck.name}" to "${targetDeck?.name || 'target deck'}" successfully!`);
-                        setTimeout(() => setImportNotice(null), 4500);
-                      }
-                      setTransferringDeck(null);
-                    }}
+                    onClick={() => setShowTransferConfirm(true)}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
                   >
                     <ArrowRightLeft className="w-3.5 h-3.5" />
@@ -742,6 +726,78 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Transfer Confirmation Modal */}
+      {showTransferConfirm && transferringDeck && targetTransferSetId && (
+        <div
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center z-60 p-4 animate-fade-in"
+          onClick={() => setShowTransferConfirm(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 rounded-2xl shrink-0">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">Confirm Word Transfer</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Please review the transfer details</p>
+              </div>
+            </div>
+
+            {/* Source and Target Decks Summary */}
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-500 dark:text-slate-400">From (Source):</span>
+                <span className="font-black text-slate-800 dark:text-slate-100 truncate max-w-[200px]">
+                  {transferringDeck.name} ({transferringDeck.items?.length || 0} words)
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-500 dark:text-slate-400">To (Target):</span>
+                <span className="font-black text-indigo-600 dark:text-indigo-400 truncate max-w-[200px]">
+                  {vocabSets.find(s => s.id === targetTransferSetId)?.name}
+                </span>
+              </div>
+            </div>
+
+            {/* Disclaimer text moved to confirmation modal */}
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-2xl text-xs text-amber-900 dark:text-amber-200 leading-relaxed font-medium">
+              All <strong className="font-black">{transferringDeck.items?.length || 0} words</strong> will be moved to the target deck. Duplicate entries will be automatically filtered, and this deck will be cleared.
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowTransferConfirm(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onTransferDeckItems && transferringDeck && targetTransferSetId) {
+                    const targetDeck = vocabSets.find(s => s.id === targetTransferSetId);
+                    const count = transferringDeck.items?.length || 0;
+                    onTransferDeckItems(transferringDeck.id, targetTransferSetId);
+                    setImportNotice(`Transferred ${count} words from "${transferringDeck.name}" to "${targetDeck?.name || 'target deck'}" successfully!`);
+                    setTimeout(() => setImportNotice(null), 4500);
+                  }
+                  setShowTransferConfirm(false);
+                  setTransferringDeck(null);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                <span>Confirm Transfer</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -924,26 +980,38 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                             </div>
                           </div>
                         ) : isEditing ? (
-                          <div className="flex-1 flex gap-2" onClick={e => e.stopPropagation()}>
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              handleRenameSubmit(set.id);
+                            }}
+                            className="flex-1 flex items-center gap-2 min-w-0 w-full"
+                            onClick={e => e.stopPropagation()}
+                          >
                             <input
                               type="text"
                               value={editingName}
                               onChange={e => setEditingName(e.target.value)}
-                              className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              autoFocus
+                              placeholder="Deck name..."
+                              className="flex-1 min-w-0 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-blue-500 dark:border-blue-400 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
-                            <button
-                              onClick={() => handleRenameSubmit(set.id)}
-                              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => setEditingSetId(null)}
-                              className="px-2 py-1.5 text-slate-500 text-xs font-bold cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="submit"
+                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs transition-colors"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSetId(null)}
+                                className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
                         ) : (
                           <>
                             <div className="flex-1 flex items-center gap-3 min-w-0">
@@ -1012,7 +1080,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                     onClick={() => {
                                       setOpenMenuSetId(null);
                                       setTransferringDeck(set);
-                                      setTargetSearchQuery('');
+                                      setShowTransferConfirm(false);
                                       setTargetGroupFilter('all');
                                       const other = vocabSets.find(s => s.id !== set.id);
                                       setTargetTransferSetId(other?.id || '');
@@ -1348,26 +1416,38 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                           </div>
                         </div>
                       ) : isEditing ? (
-                        <div className="flex-1 flex gap-2">
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleRenameSubmit(set.id);
+                          }}
+                          className="flex-1 flex items-center gap-2 min-w-0 w-full"
+                          onClick={e => e.stopPropagation()}
+                        >
                           <input
                             type="text"
                             value={editingName}
                             onChange={e => setEditingName(e.target.value)}
-                            className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            autoFocus
+                            placeholder="Deck name..."
+                            className="flex-1 min-w-0 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-blue-500 dark:border-blue-400 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
-                          <button
-                            onClick={() => handleRenameSubmit(set.id)}
-                            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingSetId(null)}
-                            className="px-2 py-1.5 text-slate-500 text-xs font-bold cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                        </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="submit"
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs transition-colors"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingSetId(null)}
+                              className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
                       ) : (
                         <>
                           <div
@@ -1436,7 +1516,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                                   onClick={() => {
                                     setOpenMenuSetId(null);
                                     setTransferringDeck(set);
-                                    setTargetSearchQuery('');
+                                    setShowTransferConfirm(false);
                                     setTargetGroupFilter('all');
                                     const other = vocabSets.find(s => s.id !== set.id);
                                     setTargetTransferSetId(other?.id || '');

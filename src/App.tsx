@@ -112,7 +112,9 @@ export default function App() {
             nouns: { ...DEFAULT_QUIZ_SETTINGS.nouns, ...parsed.nouns },
             verbs: { ...DEFAULT_QUIZ_SETTINGS.verbs, ...parsed.verbs },
             adjectives: { ...DEFAULT_QUIZ_SETTINGS.adjectives, ...parsed.adjectives },
+            expressions: { ...DEFAULT_QUIZ_SETTINGS.expressions, ...parsed.expressions },
             others: { ...DEFAULT_QUIZ_SETTINGS.others, ...parsed.others },
+            cardOptions: { ...DEFAULT_QUIZ_SETTINGS.cardOptions, ...parsed.cardOptions },
           };
         }
       }
@@ -419,6 +421,7 @@ export default function App() {
             activeSetId={currentSet.id}
             vocabList={vocabList}
             onUpdateVocabMastery={handleUpdateVocabMastery}
+            onUpdateVocabItem={handleUpdateVocabItem}
             quizSettings={quizSettings}
           />
         </div>

@@ -509,26 +509,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                           </div>
                         ) : isEditing ? (
-                          <div className="flex-1 flex gap-2">
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              handleRenameSubmit(set.id);
+                            }}
+                            className="flex-1 flex items-center gap-2 min-w-0 w-full"
+                            onClick={e => e.stopPropagation()}
+                          >
                             <input
                               type="text"
                               value={editingName}
                               onChange={e => setEditingName(e.target.value)}
-                              className="flex-1 px-2.5 py-1 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              autoFocus
+                              placeholder="Deck name..."
+                              className="flex-1 min-w-0 px-2.5 py-1 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-blue-500 dark:border-blue-400 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
-                            <button
-                              onClick={() => handleRenameSubmit(set.id)}
-                              className="px-2.5 py-1 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => setEditingSetId(null)}
-                              className="px-2 py-1 text-slate-500 text-xs font-bold cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="submit"
+                                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs transition-colors"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSetId(null)}
+                                className="px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
                         ) : (
                           <>
                             <div

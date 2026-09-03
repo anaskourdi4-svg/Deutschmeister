@@ -27,8 +27,10 @@ import {
   Tag,
   BarChart3,
   ArrowLeftRight,
-  Quote
+  Quote,
+  Pencil
 } from 'lucide-react';
+import { VocabEditModal } from './VocabManager';
 
 interface FlashcardQuizProps {
   vocabList: VocabItem[];
@@ -39,6 +41,7 @@ interface FlashcardQuizProps {
   ) => void;
   activeSetId?: string;
   quizSettings?: QuizQuestionSettings;
+  onUpdateVocabItem?: (updatedItem: VocabItem) => void;
 }
 
 interface QuestionAnswerState {
@@ -499,6 +502,7 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   onUpdateVocabMastery,
   activeSetId,
   quizSettings,
+  onUpdateVocabItem,
 }) => {
   const settings = quizSettings || DEFAULT_QUIZ_SETTINGS;
   // Track last deck ID to reset practice session when switching decks
@@ -521,18 +525,22 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   // Active Item for Example Sentence Modal Popup
   const [activeExampleItem, setActiveExampleItem] = useState<VocabItem | null>(null);
 
-  // Close example modal on Escape key
+  // Active Item for Edit Word Modal
+  const [editingVocabItem, setEditingVocabItem] = useState<VocabItem | null>(null);
+
+  // Close example and edit modals on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setActiveExampleItem(null);
+        setEditingVocabItem(null);
       }
     };
-    if (activeExampleItem) {
+    if (activeExampleItem || editingVocabItem) {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [activeExampleItem]);
+  }, [activeExampleItem, editingVocabItem]);
 
   // Pagination State (10 items per page)
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -1653,6 +1661,19 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {/* Edit Word Pen Button */}
+                        {(settings.cardOptions?.showEditButton ?? true) && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingVocabItem(item)}
+                            title="Edit Word"
+                            aria-label="Edit Word"
+                            className="p-1.5 rounded-xl text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 bg-slate-100 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-blue-950/60 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700 transition-all cursor-pointer shadow-xs flex items-center justify-center"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
                         {(() => {
                           const badge = getMasteryBadgeStyle(liveMasteryScore);
                           return (
@@ -2285,6 +2306,23 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
             })()}
           </div>
         </div>
+      )}
+
+      {/* Edit Word Modal (Directly in Practice Cards) */}
+      {editingVocabItem && (
+        <VocabEditModal
+          item={editingVocabItem}
+          onSave={(updatedItem) => {
+            setSessionItems(prev =>
+              prev.map(it => (it.id === updatedItem.id ? updatedItem : it))
+            );
+            if (onUpdateVocabItem) {
+              onUpdateVocabItem(updatedItem);
+            }
+            setEditingVocabItem(null);
+          }}
+          onClose={() => setEditingVocabItem(null)}
+        />
       )}
 
     </div>
