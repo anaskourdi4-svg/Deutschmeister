@@ -595,21 +595,86 @@ export function exportVocabToJson(items: VocabItem[]): string {
   return JSON.stringify(items, null, 2);
 }
 
-export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
-  const headers = [
-    'Type',
-    'Article',
-    'Word',
-    'Plural',
-    'regular/irregular',
-    'Conjugation',
-    'Preposition',
-    'Case',
-    'Antonym',
-    'EN_translation',
-    'Example',
-    'CEFR level'
+export const SHEET_HEADERS_17 = [
+  'Type',
+  'Article',
+  'Word',
+  'Plural',
+  'regular/irregular',
+  'Conjugation',
+  'Preposition',
+  'Case',
+  'Antonym',
+  'EN_translation',
+  'Example',
+  'CEFR level',
+  'Mastery_Score',
+  'Attempts_Count',
+  'Correct_Count',
+  'Last_Practiced',
+  'Is_Starred'
+];
+
+export function vocabItemToSheetRow(item: VocabItem): string[] {
+  const isIrregularVerb = item.type === 'verb' && checkIsIrregularVerb(item);
+  const typeStr = item.type === 'noun'
+    ? 'Noun'
+    : item.type === 'verb'
+    ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
+    : item.type === 'adjective'
+    ? 'Adjective'
+    : item.type === 'expression'
+    ? 'Expression'
+    : 'Others';
+
+  const articleStr = item.type === 'noun' ? (item.gender || '') : '';
+  const wordStr = item.word || '';
+  const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
+  const regIrregStr = item.type === 'verb' ? (checkIsIrregularVerb(item) ? 'irregular' : 'regular') : '';
+
+  let conjugationStr = '';
+  if (item.type === 'verb') {
+    const parts = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
+    if (parts.length > 0) {
+      conjugationStr = parts.join(', ');
+    }
+  }
+
+  const antonymStr = item.type === 'adjective' ? (item.antonym || '') : '';
+  const prepositionStr = item.preposition || '';
+  const prepositionCaseStr = item.prepositionCase || '';
+  const translationEnStr = item.translationEn || item.translationAr || '';
+  const exampleStr = item.exampleDe || '';
+  const levelStr = item.level || 'A1';
+  const masteryScoreStr = String(item.masteryScore ?? 0);
+  const attemptsCountStr = String(item.attemptsCount ?? 0);
+  const correctCountStr = String(item.correctCount ?? 0);
+  const lastPracticedStr = item.lastPracticed || '';
+  const isStarredStr = item.isStarred ? 'TRUE' : 'FALSE';
+
+  return [
+    typeStr,
+    articleStr,
+    wordStr,
+    pluralStr,
+    regIrregStr,
+    conjugationStr,
+    prepositionStr,
+    prepositionCaseStr,
+    antonymStr,
+    translationEnStr,
+    exampleStr,
+    levelStr,
+    masteryScoreStr,
+    attemptsCountStr,
+    correctCountStr,
+    lastPracticedStr,
+    isStarredStr,
   ];
+}
+
+export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
+  const headers = SHEET_HEADERS_17;
 
   const getTypeRank = (item: VocabItem) => {
     if (item.type === 'noun') return 1;
@@ -626,53 +691,7 @@ export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
     return (a.word || '').localeCompare(b.word || '', 'de');
   });
 
-  const rows = sortedItems.map(item => {
-    const isIrregularVerb = item.type === 'verb' && checkIsIrregularVerb(item);
-    const typeStr = item.type === 'noun'
-      ? 'Noun'
-      : item.type === 'verb'
-      ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
-      : item.type === 'adjective'
-      ? 'Adjective'
-      : item.type === 'expression'
-      ? 'Expression'
-      : 'Others';
-
-    const articleStr = item.type === 'noun' ? (item.gender || '') : '';
-    const wordStr = item.word || '';
-    const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
-    const regIrregStr = item.type === 'verb' ? (checkIsIrregularVerb(item) ? 'irregular' : 'regular') : '';
-
-    let conjugationStr = '';
-    if (item.type === 'verb') {
-      const parts = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
-      if (parts.length > 0) {
-        conjugationStr = parts.join(', ');
-      }
-    }
-
-    const antonymStr = item.type === 'adjective' ? (item.antonym || '') : '';
-    const prepositionStr = item.preposition || '';
-    const prepositionCaseStr = item.prepositionCase || '';
-    const translationEnStr = item.translationEn || item.translationAr || '';
-    const exampleStr = item.exampleDe || '';
-    const levelStr = item.level || 'A1';
-
-    return [
-      typeStr,
-      articleStr,
-      wordStr,
-      pluralStr,
-      regIrregStr,
-      conjugationStr,
-      prepositionStr,
-      prepositionCaseStr,
-      antonymStr,
-      translationEnStr,
-      exampleStr,
-      levelStr
-    ];
-  });
+  const rows = sortedItems.map(item => vocabItemToSheetRow(item));
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const workbook = XLSX.utils.book_new();
@@ -684,20 +703,7 @@ export function exportVocabToExcelBuffer(items: VocabItem[]): Uint8Array {
 export function exportVocabToCSV(items: VocabItem[]): string {
   // Add UTF-8 BOM (\uFEFF) for Microsoft Excel and Google Sheets encoding compatibility
   const BOM = '\uFEFF';
-  const headers = [
-    'Type',
-    'Article',
-    'Word',
-    'Plural',
-    'regular/irregular',
-    'Conjugation',
-    'Preposition',
-    'Case',
-    'Antonym',
-    'EN_translation',
-    'Example',
-    'CEFR level'
-  ];
+  const headers = SHEET_HEADERS_17;
 
   const escapeField = (val?: string | number) => {
     if (val === undefined || val === null) return '""';
@@ -721,51 +727,8 @@ export function exportVocabToCSV(items: VocabItem[]): string {
   });
 
   const rows = sortedItems.map(item => {
-    const isIrregularVerb = item.type === 'verb' && checkIsIrregularVerb(item);
-    const typeStr = item.type === 'noun'
-      ? 'Noun'
-      : item.type === 'verb'
-      ? (isIrregularVerb ? 'Verb (irregular)' : 'Verb')
-      : item.type === 'adjective'
-      ? 'Adjective'
-      : item.type === 'expression'
-      ? 'Expression'
-      : 'Others';
-
-    const articleStr = item.type === 'noun' ? (item.gender || '') : '';
-    const wordStr = item.word || '';
-    const pluralStr = item.type === 'noun' ? (item.plural || '') : '';
-    const regIrregStr = item.type === 'verb' ? (checkIsIrregularVerb(item) ? 'irregular' : 'regular') : '';
-
-    let conjugationStr = '';
-    if (item.type === 'verb') {
-      const parts = [item.present3rd, item.praeteritum, item.perfekt].filter(Boolean);
-      if (parts.length > 0) {
-        conjugationStr = parts.join(', ');
-      }
-    }
-
-    const antonymStr = item.type === 'adjective' ? (item.antonym || '') : '';
-    const prepositionStr = item.preposition || '';
-    const prepositionCaseStr = item.prepositionCase || '';
-    const translationEnStr = item.translationEn || item.translationAr || '';
-    const exampleStr = item.exampleDe || '';
-    const levelStr = item.level || 'A1';
-
-    return [
-      escapeField(typeStr),
-      escapeField(articleStr),
-      escapeField(wordStr),
-      escapeField(pluralStr),
-      escapeField(regIrregStr),
-      escapeField(conjugationStr),
-      escapeField(prepositionStr),
-      escapeField(prepositionCaseStr),
-      escapeField(antonymStr),
-      escapeField(translationEnStr),
-      escapeField(exampleStr),
-      escapeField(levelStr)
-    ].join(',');
+    const rowValues = vocabItemToSheetRow(item);
+    return rowValues.map(escapeField).join(',');
   });
 
   return BOM + [headers.join(','), ...rows].join('\n');
@@ -998,6 +961,11 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
   let translationIdx = -1;
   let exampleIdx = -1;
   let levelIdx = -1;
+  let masteryScoreIdx = -1;
+  let attemptsIdx = -1;
+  let correctIdx = -1;
+  let lastPracticedIdx = -1;
+  let starredIdx = -1;
 
   if (hasHeader) {
     headerRow.forEach((col, idx) => {
@@ -1018,6 +986,11 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
       ) translationIdx = idx;
       else if (c.includes('example') || c.includes('beispiel') || c.includes('مثال') || c.includes('جملة')) exampleIdx = idx;
       else if (c.includes('cefr') || c === 'level' || c.includes('مستوى') || c === 'stufe') levelIdx = idx;
+      else if (c.includes('mastery') || c.includes('إتقان') || c.includes('اتقان') || c === 'score') masteryScoreIdx = idx;
+      else if (c.includes('attempt') || c.includes('محاولات') || c.includes('محاولة')) attemptsIdx = idx;
+      else if (c.includes('correct') || c.includes('صحيح') || c.includes('إجابات صحيحة')) correctIdx = idx;
+      else if (c.includes('practiced') || c.includes('تاريخ') || c.includes('last_practiced') || c.includes('last practiced')) lastPracticedIdx = idx;
+      else if (c.includes('star') || c.includes('مفضلة') || c.includes('is_starred')) starredIdx = idx;
     });
   }
 
@@ -1035,6 +1008,11 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
   if (translationIdx === -1) translationIdx = 9;
   if (exampleIdx === -1) exampleIdx = 10;
   if (levelIdx === -1) levelIdx = 11;
+  if (masteryScoreIdx === -1) masteryScoreIdx = 12;
+  if (attemptsIdx === -1) attemptsIdx = 13;
+  if (correctIdx === -1) correctIdx = 14;
+  if (lastPracticedIdx === -1) lastPracticedIdx = 15;
+  if (starredIdx === -1) starredIdx = 16;
 
   const dataRows = hasHeader ? rows.slice(1) : rows;
   const vocabItems: VocabItem[] = [];
@@ -1154,6 +1132,18 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
         const translationEn = rawMeaning || undefined;
         const translationAr = rawMeaning || 'بدون ترجمة';
 
+        const rawMastery = getVal(masteryScoreIdx);
+        const rawAttempts = getVal(attemptsIdx);
+        const rawCorrect = getVal(correctIdx);
+        const rawLastPracticed = getVal(lastPracticedIdx);
+        const rawStarred = getVal(starredIdx);
+
+        const masteryScore = rawMastery !== '' && !isNaN(Number(rawMastery)) ? Math.min(100, Math.max(0, Number(rawMastery))) : 0;
+        const attemptsCount = rawAttempts !== '' && !isNaN(Number(rawAttempts)) ? Math.max(0, Number(rawAttempts)) : 0;
+        const correctCount = rawCorrect !== '' && !isNaN(Number(rawCorrect)) ? Math.max(0, Number(rawCorrect)) : 0;
+        const lastPracticed = rawLastPracticed && rawLastPracticed.trim() ? rawLastPracticed.trim() : undefined;
+        const isStarred = ['true', '1', 'yes', 'نعم', 'starred'].includes((rawStarred || '').toLowerCase().trim());
+
         vocabItems.push({
           id: `gs_${Date.now()}_${rowIdx}`,
           word: cleanWord,
@@ -1172,9 +1162,11 @@ export function parseGoogleSheetRows(rawRowsInput: string[][]): VocabItem[] {
           exampleDe: rawExample || undefined,
           level: (/^(A1|A2|B1|B2|C1|C2)$/i.test(rawLevel.trim()) ? rawLevel.trim().toUpperCase() : 'A1') as CefrLevel,
           category: 'Allgemein',
-          masteryScore: 0,
-          attemptsCount: 0,
-          correctCount: 0,
+          masteryScore,
+          attemptsCount,
+          correctCount,
+          lastPracticed,
+          isStarred,
         });
         return;
       }

@@ -164,6 +164,8 @@ export interface VocabSet {
   description?: string;
   createdAt: string;
   items: VocabItem[];
+  googleSheetTabId?: number; // Unique numeric sheetId of the tab in Google Sheets
+  lastSyncedTabName?: string; // Last known sheet tab title in Google Sheets
 }
 
 export function getVocabItemKey(item: {

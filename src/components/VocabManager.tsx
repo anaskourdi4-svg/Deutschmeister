@@ -1033,9 +1033,11 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       (user, token) => {
         setGoogleUser(user);
         setGoogleToken(token);
-        listUserSpreadsheets(token)
-          .then(files => setUserSheets(files))
-          .catch(err => console.error('Drive listing error:', err));
+        if (token && token.trim()) {
+          listUserSpreadsheets(token)
+            .then(files => setUserSheets(files))
+            .catch(err => console.warn('Drive listing notice:', err));
+        }
       },
       () => {
         setGoogleUser(null);
@@ -1054,11 +1056,20 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
         setGoogleUser(result.user);
         setGoogleToken(result.accessToken);
         showToast(`Successfully signed in: ${result.user.displayName || result.user.email}`);
-        const files = await listUserSpreadsheets(result.accessToken);
-        setUserSheets(files);
+        if (result.accessToken) {
+          const files = await listUserSpreadsheets(result.accessToken);
+          setUserSheets(files);
+        }
       }
-    } catch (err) {
-      console.error('Sign-in error:', err);
+    } catch (err: any) {
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.message?.includes('popup-closed-by-user')
+      ) {
+        return;
+      }
+      console.warn('Sign-in notice:', err);
       showToast('Could not sign in with Google account.');
     } finally {
       setIsGoogleLoading(false);
@@ -1073,7 +1084,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       setUserSheets([]);
       showToast('Signed out of Google');
     } catch (err) {
-      console.error('Logout error:', err);
+      console.warn('Logout notice:', err);
     }
   };
 
@@ -1124,7 +1135,7 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
         showToast('Could not recognize vocabulary in sheet. Please verify column formatting.');
       }
     } catch (err: any) {
-      console.error('Sheet fetch error:', err);
+      console.warn('Sheet fetch notice:', err);
       showToast(err.message || 'Error reading Google Sheet');
     } finally {
       setIsFetchingSheet(false);

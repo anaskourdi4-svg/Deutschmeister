@@ -22,7 +22,34 @@ import {
   FolderInput,
   ArrowRightLeft,
   Eraser,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  ExternalLink,
+  FileSpreadsheet,
+  CheckCheck,
+  Globe,
+  Database,
+  Link,
+  Unlink,
+  Sparkles,
 } from 'lucide-react';
+import {
+  initGoogleAuth,
+  googleSignIn,
+  googleLogout,
+  listUserSpreadsheets,
+  createSpreadsheetWithDecks,
+  syncAllDecksToGoogleSheets,
+  importAllDecksFromGoogleSheets,
+  getSavedLinkedSheet,
+  saveLinkedSheet,
+  LinkedSpreadsheetInfo,
+  DriveSpreadsheetFile,
+  extractSpreadsheetId,
+  mergeRemoteDecksWithLocalDecks,
+} from '../services/googleSheets';
+import { User } from 'firebase/auth';
 
 interface DecksManagerProps {
   vocabSets: VocabSet[];
@@ -36,6 +63,12 @@ interface DecksManagerProps {
   onClearDeckItems?: (setId: string) => void;
   onBatchImportSets?: (sets: VocabSet[], targetGroup?: string) => void;
   onExportAllSets?: () => void;
+  onSyncAllSets?: (sets: VocabSet[]) => void;
+  autoSyncStatus?: {
+    status: 'idle' | 'pending' | 'syncing' | 'synced' | 'error' | 'unlinked' | 'unauthenticated' | string;
+    message?: string;
+    lastSyncedAt?: string | null;
+  };
 }
 
 const GROUPS_LIST = [
@@ -61,6 +94,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   onClearDeckItems,
   onBatchImportSets,
   onExportAllSets,
+  onSyncAllSets,
+  autoSyncStatus,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
@@ -94,6 +129,221 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [showInfoHeader, setShowInfoHeader] = useState(false);
   const [stagedSetId, setStagedSetId] = useState<string>(activeSetId);
+
+  // Google Sheets Cloud Sync State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentAccessToken, setCurrentAccessToken] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [linkedSheet, setLinkedSheet] = useState<LinkedSpreadsheetInfo | null>(getSavedLinkedSheet);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [driveFiles, setDriveFiles] = useState<DriveSpreadsheetFile[]>([]);
+  const [isLoadingDriveFiles, setIsLoadingDriveFiles] = useState(false);
+  const [manualSheetInput, setManualSheetInput] = useState('');
+  const [newSheetTitle, setNewSheetTitle] = useState('DeutschMeister - German Vocabulary & Mastery');
+  const [syncModalTab, setSyncModalTab] = useState<'status' | 'create' | 'link'>('status');
+
+  // Confirmation Modals for Destructive/Mutating Operations
+  const [confirmPushModalOpen, setConfirmPushModalOpen] = useState(false);
+  const [confirmPullModalOpen, setConfirmPullModalOpen] = useState(false);
+  const [pendingPullData, setPendingPullData] = useState<{ title: string; decks: VocabSet[] } | null>(null);
+
+  // Listen for Google Auth changes
+  useEffect(() => {
+    const unsub = initGoogleAuth(
+      (user, token) => {
+        setCurrentUser(user);
+        setCurrentAccessToken(token);
+      },
+      () => {
+        setCurrentUser(null);
+        setCurrentAccessToken(null);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  const loadDriveFiles = async (token: string) => {
+    setIsLoadingDriveFiles(true);
+    try {
+      const files = await listUserSpreadsheets(token);
+      setDriveFiles(files);
+    } catch (e: any) {
+      console.warn('Failed to list Google Drive spreadsheets:', e);
+    } finally {
+      setIsLoadingDriveFiles(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsAuthLoading(true);
+    setSyncFeedback(null);
+    try {
+      const res = await googleSignIn();
+      if (res) {
+        setCurrentUser(res.user);
+        setCurrentAccessToken(res.accessToken);
+        loadDriveFiles(res.accessToken);
+      }
+    } catch (err: any) {
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.message?.includes('popup-closed-by-user')
+      ) {
+        return;
+      }
+      console.warn('Google Sign-In notice:', err);
+      setSyncFeedback({ type: 'error', message: err.message || 'فشل تسجيل الدخول باستخدام حساب Google' });
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleGoogleLogout = async () => {
+    await googleLogout();
+    setCurrentUser(null);
+    setCurrentAccessToken(null);
+    setDriveFiles([]);
+  };
+
+  // Create brand new master spreadsheet in Google Drive
+  const handleCreateNewMasterSheet = async () => {
+    if (!currentAccessToken) {
+      handleGoogleLogin();
+      return;
+    }
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const info = await createSpreadsheetWithDecks(
+        newSheetTitle || 'DeutschMeister - German Vocabulary & Mastery',
+        vocabSets,
+        currentAccessToken
+      );
+      setLinkedSheet(info);
+      setSyncFeedback({
+        type: 'success',
+        message: `تم إنشاء جدول Google Sheet بنجاح في درايف مع ${info.deckCount} تبويب (${info.wordCount} مفردة مع كافة البيانات التقنية)!`
+      });
+      setSyncModalTab('status');
+    } catch (err: any) {
+      console.warn('Create sheet notice:', err);
+      setSyncFeedback({ type: 'error', message: err.message || 'فشل إنشاء الجدول في Google Drive.' });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Link existing spreadsheet
+  const handleLinkExistingSheet = async (targetIdOrUrl: string) => {
+    if (!currentAccessToken) {
+      handleGoogleLogin();
+      return;
+    }
+    const cleanId = extractSpreadsheetId(targetIdOrUrl);
+    if (!cleanId) {
+      setSyncFeedback({ type: 'error', message: 'يرجى إدخال رابط أو معرف Google Sheet صحيح.' });
+      return;
+    }
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const result = await importAllDecksFromGoogleSheets(cleanId, currentAccessToken);
+      const totalWords = result.decks.reduce((acc, d) => acc + (d.items?.length || 0), 0);
+      const info: LinkedSpreadsheetInfo = {
+        spreadsheetId: cleanId,
+        spreadsheetTitle: result.title,
+        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${cleanId}/edit`,
+        lastSyncedAt: new Date().toISOString(),
+        deckCount: result.decks.length,
+        wordCount: totalWords,
+      };
+      setLinkedSheet(info);
+      saveLinkedSheet(info);
+      setSyncFeedback({
+        type: 'success',
+        message: `تم ربط الجدول بنجاح: "${result.title}" (${result.decks.length} تبويب، ${totalWords} مفردة).`
+      });
+      setManualSheetInput('');
+      setSyncModalTab('status');
+    } catch (err: any) {
+      console.warn('Link sheet notice:', err);
+      setSyncFeedback({ type: 'error', message: err.message || 'فشل ربط الجدول. يرجى التأكد من صحة الرابط والصلاحيات.' });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Push all decks to Google Sheets
+  const handleExecutePushToSheets = async () => {
+    if (!linkedSheet || !currentAccessToken) return;
+    setConfirmPushModalOpen(false);
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const updatedInfo = await syncAllDecksToGoogleSheets(
+        linkedSheet.spreadsheetId,
+        vocabSets,
+        currentAccessToken
+      );
+      if (updatedInfo.mergedDecks) {
+        onSyncAllSets?.(updatedInfo.mergedDecks);
+      }
+      setLinkedSheet(updatedInfo);
+      setSyncFeedback({
+        type: 'success',
+        message: updatedInfo.newWordsFound && updatedInfo.newWordsFound > 0
+          ? `تمت المزامنة بنجاح! تم حفظ المفردات واكتشاف ${updatedInfo.newWordsFound} مفردة جديدة من Google Sheets ودمجها.`
+          : `تمت المزامنة بنجاح! تم تحديث ${updatedInfo.deckCount} تبويب (${updatedInfo.wordCount} مفردة) في Google Sheets.`
+      });
+    } catch (err: any) {
+      console.warn('Push to sheets notice:', err);
+      setSyncFeedback({ type: 'error', message: err.message || 'فشل تحديث الجدول في Google Sheets.' });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Pull all decks from Google Sheets
+  const handleRequestPullFromSheets = async () => {
+    if (!linkedSheet || !currentAccessToken) return;
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const result = await importAllDecksFromGoogleSheets(
+        linkedSheet.spreadsheetId,
+        currentAccessToken
+      );
+      setPendingPullData(result);
+      setConfirmPullModalOpen(true);
+    } catch (err: any) {
+      console.warn('Pull from sheets notice:', err);
+      setSyncFeedback({ type: 'error', message: err.message || 'فشل قراءة محتوى Google Sheets.' });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleExecutePullConfirmed = () => {
+    if (!pendingPullData || !pendingPullData.decks || pendingPullData.decks.length === 0) return;
+    const merge = mergeRemoteDecksWithLocalDecks(vocabSets, pendingPullData.decks);
+    onSyncAllSets?.(merge.mergedSets);
+    const totalWords = merge.mergedSets.reduce((acc, d) => acc + (d.items?.length || 0), 0);
+    setSyncFeedback({
+      type: 'success',
+      message: `تم جلب ودمج البيانات بنجاح: تم إضافة ${merge.newWordsCount} مفردة جديدة وتحديث ${merge.updatedWordsCount} مفردة (إجمالي ${totalWords} مفردة).`
+    });
+    setConfirmPullModalOpen(false);
+    setPendingPullData(null);
+  };
+
+  const handleUnlinkSheet = () => {
+    saveLinkedSheet(null);
+    setLinkedSheet(null);
+    setSyncFeedback({ type: 'success', message: 'تم إلغاء ربط الجدول.' });
+  };
 
   useEffect(() => {
     setStagedSetId(activeSetId);
@@ -331,6 +581,27 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shrink-0">
                     {vocabSets.length} Decks
                   </span>
+
+                  {/* Google Sheets Sync Pill Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSyncModalOpen(true);
+                      if (currentAccessToken && driveFiles.length === 0) {
+                        loadDriveFiles(currentAccessToken);
+                      }
+                    }}
+                    className={`text-xs font-black px-3 py-1 rounded-full border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                      linkedSheet
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800 hover:bg-emerald-100'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700 hover:border-emerald-400 hover:text-emerald-700'
+                    }`}
+                    title="Google Sheets Cloud Sync"
+                  >
+                    <FileSpreadsheet className={`w-3.5 h-3.5 ${linkedSheet ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`} />
+                    <span>{linkedSheet ? 'Sheets Synced' : 'Google Sheets Sync'}</span>
+                    <span className={`w-2 h-2 rounded-full ${linkedSheet ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                  </button>
                 </div>
               </div>
             </div>
@@ -427,6 +698,140 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
         )}
 
       </div>
+
+      {/* Google Sheets Cloud Database Sync Banner */}
+      {linkedSheet ? (
+        <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-emerald-950/40 border border-emerald-200/90 dark:border-emerald-800/80 rounded-3xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="p-3 bg-emerald-600 text-white rounded-2xl shrink-0 shadow-xs relative">
+              <FileSpreadsheet className="w-5 h-5" />
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 border-2 border-white dark:border-slate-900 rounded-full animate-pulse" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                  {linkedSheet.spreadsheetTitle}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>المزامنة التلقائية مفعلة دائماً</span>
+                </span>
+                <a
+                  href={linkedSheet.spreadsheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-extrabold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                >
+                  <span>Open in Sheets</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-400 font-medium flex items-center gap-2 flex-wrap">
+                <span>يتم حفظ تقدمك وتعديلات المفردات تلقائياً في السحابة فوراً.</span>
+                {autoSyncStatus && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                    autoSyncStatus.status === 'syncing'
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 animate-pulse'
+                      : autoSyncStatus.status === 'pending'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : autoSyncStatus.status === 'synced'
+                      ? 'bg-emerald-100/70 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                      : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                  }`}>
+                    {autoSyncStatus.status === 'syncing'
+                      ? '🔄 جارٍ الحفظ التلقائي...'
+                      : autoSyncStatus.status === 'pending'
+                      ? '⏳ تعديلات قيد الحفظ...'
+                      : autoSyncStatus.status === 'synced'
+                      ? `✓ آخر مزامنة: ${autoSyncStatus.lastSyncedAt ? new Date(autoSyncStatus.lastSyncedAt).toLocaleTimeString() : 'الآن'}`
+                      : 'متزامن'}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap shrink-0">
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={() => {
+                if (!currentAccessToken) {
+                  handleGoogleLogin();
+                } else {
+                  setConfirmPushModalOpen(true);
+                }
+              }}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              title="رفع يدوي مباشر لكافة الحزم ونسب الإتقان إلى Google Sheets"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>رفع يدوي (Push)</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={() => {
+                if (!currentAccessToken) {
+                  handleGoogleLogin();
+                } else {
+                  handleRequestPullFromSheets();
+                }
+              }}
+              className="px-3.5 py-2 bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              title="جلب يدوي لأحدث البيانات ونسب الإتقان من Google Sheets"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>جلب يدوي (Pull)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSyncModalOpen(true)}
+              className="p-2 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-white/60 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+              title="إعدادات مزامنة Google Sheets"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border border-blue-200/90 dark:border-blue-800/80 rounded-3xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="p-3 bg-blue-600 text-white rounded-2xl shrink-0 shadow-xs">
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                  المزامنة التلقائية مع Google Sheets
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
+                  Cloud Database
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                اربط جدولك أو أنشئ جدولاً جديداً في Google Drive ليتم حفظ تقدمك ومفرداتك تلقائياً وبشكل دائم في السحابة.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsSyncModalOpen(true);
+              if (currentAccessToken && driveFiles.length === 0) {
+                loadDriveFiles(currentAccessToken);
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>ربط وتفعيل المزامنة التلقائية</span>
+          </button>
+        </div>
+      )}
 
       {/* Move Deck Modal */}
       {movingDeck && (
@@ -1708,6 +2113,549 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
         )}
 
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* CONFIRM PUSH TO SHEETS DIALOG (MANDATORY WORKSPACE CONFIRMATION) */}
+      {/* ------------------------------------------------------------- */}
+      {confirmPushModalOpen && linkedSheet && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 rounded-2xl shrink-0">
+                <RefreshCw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">تأكيد المزامنة مع Google Sheets</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Confirm Push to Google Sheets</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl text-xs space-y-2 border border-slate-200 dark:border-slate-700">
+              <div className="font-extrabold text-slate-900 dark:text-white flex items-center justify-between">
+                <span>Target Sheet:</span>
+                <span className="text-emerald-600 dark:text-emerald-400 truncate max-w-[200px]">{linkedSheet.spreadsheetTitle}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300">
+                سيتم تحديث الشيت بـ <span className="font-black text-slate-900 dark:text-white">{vocabSets.length} تبويب (حزم Decks)</span> بإجمالي <span className="font-black text-slate-900 dark:text-white">{totalDatabaseWords} مفردة</span> وتحديث درجات الإتقان وسجل الممارسة (17 عمود).
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmPushModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                إلغاء / Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={handleExecutePushToSheets}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer flex items-center gap-2"
+              >
+                {isSyncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                <span>موافق، مزامنة للشيت</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* CONFIRM PULL FROM SHEETS DIALOG (MANDATORY WORKSPACE CONFIRMATION) */}
+      {/* ------------------------------------------------------------- */}
+      {confirmPullModalOpen && pendingPullData && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-2xl shrink-0">
+                <Download className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">تأكيد استيراد البيانات من الشيت</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Confirm Pull from Google Sheets</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl text-xs space-y-2 border border-slate-200 dark:border-slate-700">
+              <div className="font-extrabold text-slate-900 dark:text-white flex items-center justify-between">
+                <span>Source File:</span>
+                <span className="text-blue-600 dark:text-blue-400 truncate max-w-[200px]">{pendingPullData.title}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300">
+                تم العثور على <span className="font-black text-slate-900 dark:text-white">{pendingPullData.decks.length} حزمة</span> تحتوي على <span className="font-black text-slate-900 dark:text-white">{pendingPullData.decks.reduce((acc, d) => acc + (d.items?.length || 0), 0)} مفردة</span> متضمنة نسب الإتقان والمحاولات. هل ترغب بتحديث قاعدة بيانات التطبيق بهذه المفردات؟
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmPullModalOpen(false);
+                  setPendingPullData(null);
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                إلغاء / Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecutePullConfirmed}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>موافق، تحديث التطبيق</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* GOOGLE SHEETS MANAGEMENT MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-7 max-w-xl w-full space-y-5 shadow-2xl animate-fade-in max-h-[92vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 rounded-2xl shrink-0">
+                  <FileSpreadsheet className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Google Sheets Cloud Database</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    مزامنة حزم المفردات مع جدول خارجي في Google Drive
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSyncModalOpen(false);
+                  setSyncFeedback(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold p-1 cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            {/* Google Authentication Box */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              {currentUser ? (
+                <div className="flex items-center gap-3 min-w-0">
+                  {currentUser.photoURL ? (
+                    <img
+                      src={currentUser.photoURL}
+                      alt={currentUser.displayName || 'Google User'}
+                      className="w-10 h-10 rounded-full border border-slate-300 dark:border-slate-600 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-black flex items-center justify-center shrink-0 text-sm">
+                      {(currentUser.displayName || currentUser.email || 'G')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-black text-slate-900 dark:text-white truncate">
+                      {currentUser.displayName || 'Google User'}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      {currentUser.email}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="text-xs font-black text-slate-900 dark:text-white">
+                    Google Drive & Sheets Access
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    قم بتسجيل الدخول لإنشاء أو ربط جدول المفردات في حسابك
+                  </div>
+                </div>
+              )}
+
+              <div className="shrink-0 w-full sm:w-auto">
+                {currentUser ? (
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogout}
+                    className="px-3.5 py-1.5 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-extrabold rounded-xl transition-all cursor-pointer"
+                  >
+                    تسجيل الخروج / Sign out
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isAuthLoading}
+                    onClick={handleGoogleLogin}
+                    className="gsi-material-button w-full sm:w-auto"
+                  >
+                    <div className="gsi-material-button-state"></div>
+                    <div className="gsi-material-button-content-wrapper">
+                      <div className="gsi-material-button-icon">
+                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                          <path fill="none" d="M0 0h48v48H0z"></path>
+                        </svg>
+                      </div>
+                      <span className="gsi-material-button-contents">
+                        {isAuthLoading ? 'Connecting...' : 'Sign in with Google'}
+                      </span>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Sync Feedback Message */}
+            {syncFeedback && (
+              <div
+                className={`p-3.5 rounded-2xl text-xs font-bold border flex items-center gap-2 animate-fade-in ${
+                  syncFeedback.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/70 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+                }`}
+              >
+                {syncFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                )}
+                <span>{syncFeedback.message}</span>
+              </div>
+            )}
+
+            {/* Navigation Tabs */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-2xl border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setSyncModalTab('status')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  syncModalTab === 'status'
+                    ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 shadow-xs border border-slate-200 dark:border-slate-800'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>الجدول المرتبط (Sync)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncModalTab('create')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  syncModalTab === 'create'
+                    ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 shadow-xs border border-slate-200 dark:border-slate-800'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>إنشاء جدول جديد</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSyncModalTab('link');
+                  if (currentAccessToken && driveFiles.length === 0) {
+                    loadDriveFiles(currentAccessToken);
+                  }
+                }}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  syncModalTab === 'link'
+                    ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 shadow-xs border border-slate-200 dark:border-slate-800'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Link className="w-3.5 h-3.5" />
+                <span>ربط جدول موجود</span>
+              </button>
+            </div>
+
+            {/* TAB 1: CONNECTED SHEET STATUS & SYNC */}
+            {syncModalTab === 'status' && (
+              <div className="space-y-4 animate-fade-in">
+                {linkedSheet ? (
+                  <div className="p-4 bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-xs font-black text-slate-900 dark:text-white">
+                          الجدول السحابي النشط
+                        </span>
+                      </div>
+                      <a
+                        href={linkedSheet.spreadsheetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-black rounded-xl hover:bg-emerald-50 dark:hover:bg-emerald-950 flex items-center gap-1"
+                      >
+                        <span>فتح في Google Sheets</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900/90 p-3 rounded-xl border border-emerald-100 dark:border-emerald-900 text-xs space-y-1.5">
+                      <div className="font-extrabold text-slate-900 dark:text-white truncate">
+                        {linkedSheet.spreadsheetTitle}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-medium flex-wrap">
+                        <span>{vocabSets.length} حزم (Decks)</span>
+                        <span>•</span>
+                        <span>{totalDatabaseWords} مفردة</span>
+                        <span>•</span>
+                        <span>آخر مزامنة: {new Date(linkedSheet.lastSyncedAt).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+
+                    {/* Sync Actions */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <button
+                        type="button"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          if (!currentAccessToken) handleGoogleLogin();
+                          else setConfirmPushModalOpen(true);
+                        }}
+                        className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                        <span>مزامنة للشيت (Push)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          if (!currentAccessToken) handleGoogleLogin();
+                          else handleRequestPullFromSheets();
+                        }}
+                        className="py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-black shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>استيراد من الشيت (Pull)</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-800/60 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleUnlinkSheet}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                        <span>فصل الربط عن هذا الجدول</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-6 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 space-y-3">
+                    <CloudOff className="w-10 h-10 text-slate-400 mx-auto" />
+                    <div>
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                        لم يتم ربط جدول حتى الآن
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1">
+                        يمكنك إنشاء جدول رئيسي جديد في Google Drive بضغطة زر، أو ربط جدول Google Sheet موجود بالفعل.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setSyncModalTab('create')}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer"
+                      >
+                        إنشاء جدول جديد الآن
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSyncModalTab('link')}
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-black border border-slate-200 dark:border-slate-700 cursor-pointer"
+                      >
+                        ربط جدول موجود
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Structure Explainer */}
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-2xl text-xs space-y-1.5">
+                  <div className="font-black text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                    <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <span>هيكلية الجدول وقاعدة البيانات (17 عمود):</span>
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
+                    يحتوي الجدول على تبويب مستقل لكل حزمة Deck، مقسمة إلى 12 عموداً لمعلومات المفردة (Type, Article, Word, Plural, Conjugation, Preposition, Case, Antonym, Translation, Example, CEFR level)، بالإضافة إلى 5 أعمدة تقنية خاصة بالتطبيق لحفظ درجات الإتقان (Mastery_Score)، المحاولات (Attempts_Count)، الإجابات الصحيحة (Correct_Count)، تاريخ الممارسة (Last_Practiced)، والمفضلة (Is_Starred).
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: CREATE MASTER SHEET */}
+            {syncModalTab === 'create' && (
+              <div className="space-y-4 animate-fade-in">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">
+                    اسم ملف Google Sheet الجديد:
+                  </label>
+                  <input
+                    type="text"
+                    value={newSheetTitle}
+                    onChange={e => setNewSheetTitle(e.target.value)}
+                    placeholder="DeutschMeister - German Vocabulary & Mastery"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] text-slate-400 block">
+                    سيتم حفظ الملف في حساب Google Drive الخاص بك تلقائياً.
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                  <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                    التبويبات التي سيتم إنشاؤها فوراً ({vocabSets.length} حزم):
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                    {vocabSets.map((s, idx) => (
+                      <span
+                        key={s.id || idx}
+                        className="px-2.5 py-1 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-bold"
+                      >
+                        {s.name} ({s.items?.length || 0})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={handleCreateNewMasterSheet}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {isSyncing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>جاري إنشاء الجدول في Google Drive ومزامنة البيانات...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>إنشاء الجدول في Drive ومزامنة كافة الحزم الآن</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* TAB 3: LINK EXISTING SHEET */}
+            {syncModalTab === 'link' && (
+              <div className="space-y-4 animate-fade-in">
+                <div className="space-y-2">
+                  <label className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">
+                    رابط أو معرف Google Sheet:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualSheetInput}
+                      onChange={e => setManualSheetInput(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr"
+                    />
+                    <button
+                      type="button"
+                      disabled={!manualSheetInput.trim() || isSyncing}
+                      onClick={() => handleLinkExistingSheet(manualSheetInput)}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer shrink-0"
+                    >
+                      ربط الشيت
+                    </button>
+                  </div>
+                </div>
+
+                {/* Drive Spreadsheets List */}
+                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                      أو اختر من ملفات Google Sheets في درايف:
+                    </span>
+                    {currentAccessToken && (
+                      <button
+                        type="button"
+                        onClick={() => loadDriveFiles(currentAccessToken)}
+                        className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isLoadingDriveFiles ? 'animate-spin' : ''}`} />
+                        <span>تحديث القائمة</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {!currentAccessToken ? (
+                    <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl text-center text-xs text-slate-500">
+                      سجل الدخول بحساب Google لعرض جداولك الموجودة في Drive تلقائياً.
+                    </div>
+                  ) : isLoadingDriveFiles ? (
+                    <div className="p-4 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>جاري جلب ملفات Google Drive...</span>
+                    </div>
+                  ) : driveFiles.length > 0 ? (
+                    <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+                      {driveFiles.map(file => (
+                        <div
+                          key={file.id}
+                          className="p-2.5 bg-slate-50 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between gap-2 text-xs transition-all"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-slate-900 dark:text-white truncate">
+                              {file.name}
+                            </div>
+                            {file.modifiedTime && (
+                              <div className="text-[10px] text-slate-400">
+                                معدل: {new Date(file.modifiedTime).toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={isSyncing}
+                            onClick={() => handleLinkExistingSheet(file.id)}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black shrink-0 cursor-pointer"
+                          >
+                            ربط
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
+                      لم يتم العثور على جداول بيانات حديثة في Drive. يمكنك إدخال الرابط أعلاه يدوياً.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );

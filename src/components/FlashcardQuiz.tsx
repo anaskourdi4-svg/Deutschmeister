@@ -521,6 +521,19 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
   
   // Session Completion Modal
   const [isSessionCompleted, setIsSessionCompleted] = useState<boolean>(false);
+  const hasTriggeredAllAnsweredSyncRef = React.useRef(false);
+
+  // Broadcast practice session completion to trigger immediate auto-push
+  useEffect(() => {
+    if (isSessionCompleted) {
+      window.dispatchEvent(new CustomEvent('app:quiz-session-completed'));
+    }
+  }, [isSessionCompleted]);
+
+  // Reset completion sync trigger on new session
+  useEffect(() => {
+    hasTriggeredAllAnsweredSyncRef.current = false;
+  }, [sessionItems]);
 
   // Active Item for Example Sentence Modal Popup
   const [activeExampleItem, setActiveExampleItem] = useState<VocabItem | null>(null);
@@ -2212,7 +2225,10 @@ export const FlashcardQuiz: React.FC<FlashcardQuizProps> = ({
                 {/* FINISH SESSION BUTTON AT THE BOTTOM OF CARDS */}
                 <div className="text-center pt-2">
                   <button
-                    onClick={() => setIsSessionCompleted(true)}
+                    onClick={() => {
+                      setIsSessionCompleted(true);
+                      window.dispatchEvent(new CustomEvent('app:quiz-session-completed'));
+                    }}
                     className="px-8 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black rounded-2xl text-sm cursor-pointer shadow-lg transition-all inline-flex items-center gap-2"
                   >
                     <Trophy className="w-5 h-5 text-amber-300" />

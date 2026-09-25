@@ -23,8 +23,17 @@ import {
   FolderKanban,
   PlusCircle,
   Sparkles,
-  ArrowUpDown
+  ArrowUpDown,
+  RefreshCw,
+  CloudCheck,
+  CloudAlert,
 } from 'lucide-react';
+
+export interface AutoSyncDisplayStatus {
+  status: 'idle' | 'pending' | 'syncing' | 'synced' | 'error' | 'unlinked' | 'unauthenticated';
+  message?: string;
+  lastSyncedAt?: string | null;
+}
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -36,6 +45,7 @@ interface HeaderProps {
   onOpenSettings?: () => void;
   activeSetName?: string;
   activeSetGroup?: string;
+  autoSyncStatus?: AutoSyncDisplayStatus;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -48,6 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   activeSetName,
   activeSetGroup,
+  autoSyncStatus,
 }) => {
 
   const [isNavOpen, setIsNavOpen] = useState(false);
@@ -260,6 +271,70 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Left Side (الجانب الأيسر): Active Tab Badge & 3-Dots Tab Settings Menu */}
           <div className="flex items-center gap-2.5">
+
+            {/* Google Sheets Auto-Sync Status Chip */}
+            {autoSyncStatus && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('decks')}
+                className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer shadow-2xs ${
+                  autoSyncStatus.status === 'syncing'
+                    ? 'bg-blue-50 text-blue-800 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700 animate-pulse'
+                    : autoSyncStatus.status === 'pending'
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700'
+                    : autoSyncStatus.status === 'synced'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800 hover:bg-emerald-100'
+                    : autoSyncStatus.status === 'error'
+                    ? 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-800'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}
+                title={
+                  autoSyncStatus.status === 'synced'
+                    ? `المزامنة التلقائية مفعلة مع Google Sheets (آخر حفظ: ${autoSyncStatus.lastSyncedAt ? new Date(autoSyncStatus.lastSyncedAt).toLocaleTimeString() : 'الآن'})`
+                    : autoSyncStatus.status === 'syncing'
+                    ? 'جارٍ حفظ التعديلات والتقدم تلقائياً في Google Sheets...'
+                    : autoSyncStatus.status === 'pending'
+                    ? 'تعديلات جديدة (جارٍ التحضير للمزامنة التلقائية)...'
+                    : autoSyncStatus.status === 'error'
+                    ? `خطأ في المزامنة: ${autoSyncStatus.message || 'انقر للمحاولة ثانية'}`
+                    : 'انقر لربط Google Sheets وتفعيل الحفظ التلقائي'
+                }
+              >
+                <FileSpreadsheet className={`w-3.5 h-3.5 ${
+                  autoSyncStatus.status === 'synced'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : autoSyncStatus.status === 'syncing'
+                    ? 'text-blue-600 dark:text-blue-400 animate-spin'
+                    : autoSyncStatus.status === 'pending'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-slate-400'
+                }`} />
+
+                <span className="hidden lg:inline text-[11px]">
+                  {autoSyncStatus.status === 'syncing'
+                    ? 'جارٍ الحفظ التلقائي...'
+                    : autoSyncStatus.status === 'pending'
+                    ? 'مزامنة تلقائية...'
+                    : autoSyncStatus.status === 'synced'
+                    ? 'Google Sheets متزامن'
+                    : autoSyncStatus.status === 'error'
+                    ? 'خطأ بالمزامنة'
+                    : 'ربط Google Sheets'}
+                </span>
+
+                <span className={`w-2 h-2 rounded-full ${
+                  autoSyncStatus.status === 'synced'
+                    ? 'bg-emerald-500 animate-pulse'
+                    : autoSyncStatus.status === 'syncing'
+                    ? 'bg-blue-500 animate-ping'
+                    : autoSyncStatus.status === 'pending'
+                    ? 'bg-amber-500 animate-pulse'
+                    : autoSyncStatus.status === 'error'
+                    ? 'bg-rose-500'
+                    : 'bg-slate-400'
+                }`} />
+              </button>
+            )}
             
             {/* Active Tab Badge Indicator */}
             <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-xs font-bold border border-slate-200 dark:border-slate-700">

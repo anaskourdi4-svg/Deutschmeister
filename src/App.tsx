@@ -9,6 +9,7 @@ import { TrainingStats } from './components/TrainingStats';
 import { DecksManager } from './components/DecksManager';
 import { SettingsManager } from './components/SettingsManager';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
+import { useAutoSync } from './hooks/useAutoSync';
 
 const SETS_STORAGE_KEY = 'deutsch_meister_vocab_sets_v3';
 const ACTIVE_SET_KEY = 'deutsch_meister_active_set_v3';
@@ -392,6 +393,25 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSyncAllSets = React.useCallback((newSets: VocabSet[]) => {
+    const valid = filterValidVocabItems(newSets);
+    if (valid.length > 0) {
+      setVocabSets(valid);
+      setActiveSetId(prevActiveId => {
+        if (valid.some(s => s.id === prevActiveId)) {
+          return prevActiveId;
+        }
+        return valid[0].id;
+      });
+    }
+  }, []);
+
+  // Always-On Auto-Sync Engine for Google Sheets
+  const autoSync = useAutoSync({
+    vocabSets,
+    onSyncAllSets: handleSyncAllSets,
+  });
+
   const totalVocabCount = vocabList.length;
   const correctVocabCount = vocabList.filter(item => (item.masteryScore ?? 0) >= 80).length;
   const masteredPercentage = totalVocabCount > 0 ? Math.round((correctVocabCount / totalVocabCount) * 100) : 0;
@@ -410,6 +430,11 @@ export default function App() {
         onOpenSettings={() => setActiveTab('decks')}
         activeSetName={currentSet.name}
         activeSetGroup={currentSet.levelGroup}
+        autoSyncStatus={{
+          status: autoSync.syncStatus,
+          message: autoSync.statusMessage,
+          lastSyncedAt: autoSync.lastSyncedAt,
+        }}
       />
 
       {/* Main Content Area */}
@@ -450,6 +475,12 @@ export default function App() {
             onClearDeckItems={handleClearDeckItems}
             onBatchImportSets={handleBatchImportSets}
             onExportAllSets={handleExportAllSets}
+            onSyncAllSets={handleSyncAllSets}
+            autoSyncStatus={{
+              status: autoSync.syncStatus,
+              message: autoSync.statusMessage,
+              lastSyncedAt: autoSync.lastSyncedAt,
+            }}
           />
         )}
 
