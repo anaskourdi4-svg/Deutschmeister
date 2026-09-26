@@ -15,6 +15,8 @@ import {
   AutoSyncStatusEvent,
   computeVocabSetsSnapshot,
   mergeRemoteDecksWithLocalDecks,
+  formatSyncChangesMessage,
+  SyncChangesSummary,
 } from '../services/googleSheets';
 
 export type AutoSyncStatus =
@@ -54,13 +56,14 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
   const lastPushedSnapshotRef = useRef<string>(computeVocabSetsSnapshot(vocabSets));
 
   // Helper to update and broadcast status
-  const updateStatus = useCallback((status: AutoSyncStatus, message?: string) => {
+  const updateStatus = useCallback((status: AutoSyncStatus, message?: string, changesSummary?: SyncChangesSummary) => {
     setSyncStatus(status);
     if (message !== undefined) setStatusMessage(message);
     broadcastAutoSyncStatus({
       status,
       message,
       lastSyncedAt: lastSyncedAt || undefined,
+      changesSummary,
     });
   }, [lastSyncedAt]);
 
@@ -87,7 +90,8 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
         activeToken
       );
 
-      if (updatedInfo.mergedDecks) {
+      // Only update local state if new remote words were actually found and merged
+      if (updatedInfo.newWordsFound && updatedInfo.newWordsFound > 0 && updatedInfo.mergedDecks) {
         isRemoteUpdatingRef.current = true;
         lastPushedSnapshotRef.current = computeVocabSetsSnapshot(updatedInfo.mergedDecks);
         onSyncAllSets(updatedInfo.mergedDecks);
@@ -128,10 +132,20 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
           lastPushedSnapshotRef.current = computeVocabSetsSnapshot(merge.mergedSets);
           onSyncAllSets(merge.mergedSets);
           setLastSyncedAt(new Date().toISOString());
-          const successMsg = merge.newWordsCount > 0
-            ? `تم العثور على ${merge.newWordsCount} مفردة جديدة في Google Sheets وإضافتها بنجاح`
-            : 'تم تحديث المفردات من Google Sheets بنجاح';
-          updateStatus('synced', successMsg);
+
+          const formatted = formatSyncChangesMessage(merge.changesSummary);
+          updateStatus('synced', formatted.title, merge.changesSummary);
+
+          // Dispatch detailed event for smooth toast presentation
+          window.dispatchEvent(
+            new CustomEvent('app:autosync-changes', {
+              detail: {
+                summary: merge.changesSummary,
+                formatted,
+                timestamp: new Date().toISOString(),
+              },
+            })
+          );
         } else {
           updateStatus('synced', 'المزامنة التلقائية نشطة (متطابق)');
         }
@@ -240,10 +254,10 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    // 1.5 seconds debounce for responsive saving of word / deck changes
+    // 2.5 seconds debounce for smooth saving of word / deck changes without UI thrashing
     debounceTimerRef.current = setTimeout(() => {
       executePushNow();
-    }, 1500);
+    }, 2500);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -337,7 +351,19 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
         lastPushedSnapshotRef.current = computeVocabSetsSnapshot(merge.mergedSets);
         onSyncAllSets(merge.mergedSets);
         setLastSyncedAt(new Date().toISOString());
-        updateStatus('synced', `تم جلب البيانات بنجاح (${merge.newWordsCount} مفردة جديدة)`);
+
+        const formatted = formatSyncChangesMessage(merge.changesSummary);
+        updateStatus('synced', formatted.title, merge.changesSummary);
+
+        window.dispatchEvent(
+          new CustomEvent('app:autosync-changes', {
+            detail: {
+              summary: merge.changesSummary,
+              formatted,
+              timestamp: new Date().toISOString(),
+            },
+          })
+        );
         return merge.mergedSets;
       }
       return null;
