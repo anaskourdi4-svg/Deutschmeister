@@ -9,10 +9,12 @@ import { TrainingStats } from './components/TrainingStats';
 import { DecksManager } from './components/DecksManager';
 import { SettingsManager } from './components/SettingsManager';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
+import { SyncNotificationToast } from './components/SyncNotificationToast';
 import { useAutoSync } from './hooks/useAutoSync';
 
 const SETS_STORAGE_KEY = 'deutsch_meister_vocab_sets_v3';
 const ACTIVE_SET_KEY = 'deutsch_meister_active_set_v3';
+const ACTIVE_TAB_KEY = 'deutsch_meister_active_tab_v2';
 const QUIZ_SETTINGS_KEY = 'deutsch_meister_quiz_settings_v1';
 
 // Helper to ensure valid vocabulary items are retained
@@ -63,7 +65,28 @@ const DEFAULT_DEMO_SETS: VocabSet[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('quiz');
+  // Persist activeTab so syncing or reloading never unexpectedly forces user back to quiz
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const savedTab = localStorage.getItem(ACTIVE_TAB_KEY);
+      if (savedTab && ['quiz', 'vocab', 'decks', 'stats', 'settings'].includes(savedTab)) {
+        return savedTab as ActiveTab;
+      }
+    } catch (e) {
+      console.warn('Failed to load active tab:', e);
+    }
+    return 'quiz';
+  });
+
+  // Save activeTab to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
+    } catch (e) {
+      console.warn('Failed to save active tab:', e);
+    }
+  }, [activeTab]);
+
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Vocab Sets state
@@ -398,13 +421,23 @@ export default function App() {
     if (valid.length > 0) {
       setVocabSets(valid);
       setActiveSetId(prevActiveId => {
+        // 1. If currently active deck ID still exists, keep it exactly!
         if (valid.some(s => s.id === prevActiveId)) {
           return prevActiveId;
         }
-        return valid[0].id;
+        // 2. Try finding by matching tab title or name
+        const currentActive = vocabSets.find(s => s.id === prevActiveId);
+        if (currentActive) {
+          const cleanActiveName = (currentActive.name || '').trim().toLowerCase();
+          const matchByName = valid.find(s => (s.name || '').trim().toLowerCase() === cleanActiveName);
+          if (matchByName) return matchByName.id;
+          const matchByGroup = valid.find(s => s.levelGroup === currentActive.levelGroup);
+          if (matchByGroup) return matchByGroup.id;
+        }
+        return valid[0]?.id || prevActiveId;
       });
     }
-  }, []);
+  }, [vocabSets]);
 
   // Always-On Auto-Sync Engine for Google Sheets
   const autoSync = useAutoSync({
@@ -512,6 +545,12 @@ export default function App() {
           </p>
         </div>
       </footer>
+
+      {/* Floating Google Sheets Sync Notification Banner */}
+      <SyncNotificationToast
+        onNavigateToVocab={() => setActiveTab('vocab')}
+        onNavigateToDecks={() => setActiveTab('decks')}
+      />
 
       {/* PWA Floating Install Prompt */}
       <PWAInstallPrompt />

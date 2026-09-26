@@ -51,6 +51,8 @@ export interface AutoSyncStatusEvent {
   status: 'idle' | 'pending' | 'syncing' | 'synced' | 'error' | 'unlinked' | 'unauthenticated';
   message?: string;
   lastSyncedAt?: string;
+  changesSummary?: SyncChangesSummary;
+  formattedMessage?: { title: string; details: string[]; fullText: string };
 }
 
 export function broadcastAutoSyncStatus(event: AutoSyncStatusEvent) {
@@ -103,6 +105,22 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       // User closed the popup before completing sign-in; handle smoothly
       return null;
     }
+    if (
+      error?.code === 'auth/unauthorized-domain' ||
+      error?.message?.includes('auth/unauthorized-domain') ||
+      error?.message?.includes('unauthorized-domain')
+    ) {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي';
+      const projectId = firebaseConfig.projectId;
+      const customErr: any = new Error(
+        `النطاق الحالي (${currentHost}) غير مضاف في قائمة النطاقات المصرح بها (Authorized Domains) في Firebase Authentication. يرجى إضافته من Firebase Console > Authentication > Settings.`
+      );
+      customErr.code = 'auth/unauthorized-domain';
+      customErr.domain = currentHost;
+      customErr.projectId = projectId;
+      console.warn('Firebase unauthorized domain:', currentHost, error);
+      throw customErr;
+    }
     console.warn('Google Sign-In notice:', error);
     throw error;
   } finally {
@@ -151,11 +169,63 @@ export function computeVocabSetsSnapshot(sets: VocabSet[]): string {
   );
 }
 
+export interface DeckRenameChange {
+  oldName: string;
+  newName: string;
+}
+
+export interface SyncChangesSummary {
+  addedWordsCount: number;
+  deletedWordsCount: number;
+  updatedWordsCount: number;
+  addedWordsSamples: string[];
+  deletedWordsSamples: string[];
+  updatedWordsSamples: string[];
+  renamedDecks: DeckRenameChange[];
+  newDecksCount: number;
+  newDecksNames: string[];
+}
+
 export interface MergeRemoteResult {
   mergedSets: VocabSet[];
   hasChanges: boolean;
   newWordsCount: number;
   updatedWordsCount: number;
+  deletedWordsCount: number;
+  changesSummary: SyncChangesSummary;
+}
+
+export function formatSyncChangesMessage(summary: SyncChangesSummary): { title: string; details: string[]; fullText: string } {
+  const details: string[] = [];
+
+  if (summary.addedWordsCount > 0) {
+    const samples = summary.addedWordsSamples.length > 0 ? ` (${summary.addedWordsSamples.join('، ')})` : '';
+    details.push(`تم إضافة ${summary.addedWordsCount} مفردة جديدة${samples}`);
+  }
+  if (summary.deletedWordsCount > 0) {
+    const samples = summary.deletedWordsSamples.length > 0 ? ` (${summary.deletedWordsSamples.join('، ')})` : '';
+    details.push(`تم حذف ${summary.deletedWordsCount} مفردة أزيلت من الجدول${samples}`);
+  }
+  if (summary.updatedWordsCount > 0) {
+    const samples = summary.updatedWordsSamples.length > 0 ? ` (${summary.updatedWordsSamples.join('، ')})` : '';
+    details.push(`تم تعديل بيانات ${summary.updatedWordsCount} مفردة${samples}`);
+  }
+  if (summary.renamedDecks && summary.renamedDecks.length > 0) {
+    const renames = summary.renamedDecks.map(r => `«${r.oldName}» ➔ «${r.newName}»`).join('، ');
+    details.push(`تم تغيير تسمية: ${renames}`);
+  }
+  if (summary.newDecksCount > 0) {
+    const names = summary.newDecksNames.length > 0 ? ` (${summary.newDecksNames.join('، ')})` : '';
+    details.push(`تم استيراد ${summary.newDecksCount} حزمة جديدة${names}`);
+  }
+
+  const title = details.length > 0
+    ? `تم تلقي تحديثات جديدة من Google Sheets`
+    : `البيانات متطابقة مع Google Sheets`;
+
+  const fullText = details.length > 0 ? `${title}:\n• ` + details.join('\n• ') : title;
+
+  return { title, details, fullText };
 }
 
 /**
@@ -163,8 +233,9 @@ export interface MergeRemoteResult {
  * - Retains original local deck IDs so activeSetId never breaks.
  * - Retains original local item IDs.
  * - Detects and adds new words added directly in Google Sheets.
+ * - Detects words removed in Google Sheets.
+ * - Detects renamed sheets/tabs and updates deck names smoothly.
  * - Updates translations and grammar definitions while preserving the user's highest quiz mastery stats.
- * - Never deletes words without user intent.
  */
 export function mergeRemoteDecksWithLocalDecks(
   localDecks: VocabSet[],
@@ -173,9 +244,36 @@ export function mergeRemoteDecksWithLocalDecks(
   let hasChanges = false;
   let newWordsCount = 0;
   let updatedWordsCount = 0;
+  let deletedWordsCount = 0;
+  let newDecksCount = 0;
+
+  const addedWordsSamples: string[] = [];
+  const deletedWordsSamples: string[] = [];
+  const updatedWordsSamples: string[] = [];
+  const renamedDecks: DeckRenameChange[] = [];
+  const newDecksNames: string[] = [];
+
+  const emptySummary: SyncChangesSummary = {
+    addedWordsCount: 0,
+    deletedWordsCount: 0,
+    updatedWordsCount: 0,
+    addedWordsSamples: [],
+    deletedWordsSamples: [],
+    updatedWordsSamples: [],
+    renamedDecks: [],
+    newDecksCount: 0,
+    newDecksNames: [],
+  };
 
   if (!remoteDecks || remoteDecks.length === 0) {
-    return { mergedSets: localDecks, hasChanges: false, newWordsCount: 0, updatedWordsCount: 0 };
+    return {
+      mergedSets: localDecks,
+      hasChanges: false,
+      newWordsCount: 0,
+      updatedWordsCount: 0,
+      deletedWordsCount: 0,
+      changesSummary: emptySummary,
+    };
   }
 
   // Create deep copy of local decks
@@ -221,31 +319,70 @@ export function mergeRemoteDecksWithLocalDecks(
     if (localIdx !== -1) {
       matchedLocalIndices.add(localIdx);
       const localDeck = resultDecks[localIdx];
-      const localItems = localDeck.items;
+      const localItems = localDeck.items || [];
+      const remoteItems = remoteDeck.items || [];
 
-      // Index local items by itemKey and normalized word
-      const localItemByKey = new Map<string, { item: VocabItem; index: number }>();
-      const localItemByWord = new Map<string, { item: VocabItem; index: number }>();
+      // Check if deck was renamed in Google Sheets
+      const currentDeckName = (localDeck.name || '').trim();
+      const newDeckName = (remoteDeck.name || '').trim();
+      if (newDeckName && currentDeckName && newDeckName !== currentDeckName) {
+        renamedDecks.push({ oldName: currentDeckName, newName: newDeckName });
+        hasChanges = true;
+      }
 
-      localItems.forEach((item, i) => {
-        localItemByKey.set(getVocabItemKey(item), { item, index: i });
+      // Check deletions if deck was previously linked and remote items were parsed
+      const isLinkedDeck = localDeck.googleSheetTabId !== undefined || !!localDeck.lastSyncedTabName;
+      let initialKeptItems: VocabItem[] = [];
+
+      if (isLinkedDeck && remoteItems.length > 0) {
+        const remoteItemKeySet = new Set(remoteItems.map(r => getVocabItemKey(r)));
+        const remoteCleanWordsSet = new Set(remoteItems.map(r => (r.word || '').trim().toLowerCase()).filter(Boolean));
+
+        localItems.forEach(localItem => {
+          const itemKey = getVocabItemKey(localItem);
+          const cleanW = (localItem.word || '').trim().toLowerCase();
+          const isPresentInRemote = remoteItemKeySet.has(itemKey) || (cleanW ? remoteCleanWordsSet.has(cleanW) : false);
+
+          if (!isPresentInRemote) {
+            // Word was deleted from Google Sheets
+            deletedWordsCount++;
+            if (deletedWordsSamples.length < 4 && localItem.word) {
+              deletedWordsSamples.push(localItem.word);
+            }
+            hasChanges = true;
+          } else {
+            initialKeptItems.push(localItem);
+          }
+        });
+      } else {
+        initialKeptItems = [...localItems];
+      }
+
+      // Index kept items by itemKey and normalized word
+      const keptItemByKey = new Map<string, { item: VocabItem; index: number }>();
+      const keptItemByWord = new Map<string, { item: VocabItem; index: number }>();
+
+      initialKeptItems.forEach((item, i) => {
+        keptItemByKey.set(getVocabItemKey(item), { item, index: i });
         const cleanW = (item.word || '').trim().toLowerCase();
         if (cleanW) {
-          localItemByWord.set(cleanW, { item, index: i });
+          keptItemByWord.set(cleanW, { item, index: i });
         }
       });
 
-      const mergedItems = [...localItems];
-      const remoteItems = remoteDeck.items || [];
+      const mergedItems = [...initialKeptItems];
 
       remoteItems.forEach((remoteItem, rIdx) => {
         const itemKey = getVocabItemKey(remoteItem);
         const cleanW = (remoteItem.word || '').trim().toLowerCase();
-        const existing = localItemByKey.get(itemKey) || (cleanW ? localItemByWord.get(cleanW) : undefined);
+        const existing = keptItemByKey.get(itemKey) || (cleanW ? keptItemByWord.get(cleanW) : undefined);
 
         if (!existing) {
           // New word found in Google Sheets!
           newWordsCount++;
+          if (addedWordsSamples.length < 4 && remoteItem.word) {
+            addedWordsSamples.push(remoteItem.word);
+          }
           hasChanges = true;
           const newItem: VocabItem = {
             ...remoteItem,
@@ -253,8 +390,8 @@ export function mergeRemoteDecksWithLocalDecks(
           };
           mergedItems.push(newItem);
           const newIdx = mergedItems.length - 1;
-          localItemByKey.set(getVocabItemKey(newItem), { item: newItem, index: newIdx });
-          if (cleanW) localItemByWord.set(cleanW, { item: newItem, index: newIdx });
+          keptItemByKey.set(getVocabItemKey(newItem), { item: newItem, index: newIdx });
+          if (cleanW) keptItemByWord.set(cleanW, { item: newItem, index: newIdx });
         } else {
           // Existing word - merge updates from Google Sheets
           const target = { ...mergedItems[existing.index] };
@@ -330,6 +467,9 @@ export function mergeRemoteDecksWithLocalDecks(
           if (itemUpdated) {
             mergedItems[existing.index] = target;
             updatedWordsCount++;
+            if (updatedWordsSamples.length < 4 && target.word) {
+              updatedWordsSamples.push(target.word);
+            }
             hasChanges = true;
           }
         }
@@ -337,13 +477,22 @@ export function mergeRemoteDecksWithLocalDecks(
 
       resultDecks[localIdx] = {
         ...localDeck,
+        name: newDeckName || localDeck.name,
         googleSheetTabId: localDeck.googleSheetTabId ?? remoteDeck.googleSheetTabId,
-        lastSyncedTabName: remoteDeck.name || localDeck.lastSyncedTabName,
+        lastSyncedTabName: newDeckName || localDeck.lastSyncedTabName,
         items: mergedItems,
       };
     } else {
       // Entirely new tab in Google Sheets - add as new deck
-      newWordsCount += (remoteDeck.items?.length || 0);
+      const count = remoteDeck.items?.length || 0;
+      newWordsCount += count;
+      newDecksCount++;
+      if (remoteDeck.name) newDecksNames.push(remoteDeck.name);
+      if (remoteDeck.items && addedWordsSamples.length < 4) {
+        remoteDeck.items.slice(0, 3).forEach(i => {
+          if (i.word && addedWordsSamples.length < 4) addedWordsSamples.push(i.word);
+        });
+      }
       hasChanges = true;
       resultDecks.push({
         ...remoteDeck,
@@ -354,11 +503,25 @@ export function mergeRemoteDecksWithLocalDecks(
     }
   });
 
+  const changesSummary: SyncChangesSummary = {
+    addedWordsCount: newWordsCount,
+    deletedWordsCount,
+    updatedWordsCount,
+    addedWordsSamples,
+    deletedWordsSamples,
+    updatedWordsSamples,
+    renamedDecks,
+    newDecksCount,
+    newDecksNames,
+  };
+
   return {
     mergedSets: resultDecks,
     hasChanges,
     newWordsCount,
     updatedWordsCount,
+    deletedWordsCount,
+    changesSummary,
   };
 }
 

@@ -48,6 +48,7 @@ import {
   DriveSpreadsheetFile,
   extractSpreadsheetId,
   mergeRemoteDecksWithLocalDecks,
+  formatSyncChangesMessage,
 } from '../services/googleSheets';
 import { User } from 'firebase/auth';
 
@@ -143,6 +144,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [manualSheetInput, setManualSheetInput] = useState('');
   const [newSheetTitle, setNewSheetTitle] = useState('DeutschMeister - German Vocabulary & Mastery');
   const [syncModalTab, setSyncModalTab] = useState<'status' | 'create' | 'link'>('status');
+  const [copiedDomain, setCopiedDomain] = useState(false);
 
   // Confirmation Modals for Destructive/Mutating Operations
   const [confirmPushModalOpen, setConfirmPushModalOpen] = useState(false);
@@ -331,9 +333,10 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
     const merge = mergeRemoteDecksWithLocalDecks(vocabSets, pendingPullData.decks);
     onSyncAllSets?.(merge.mergedSets);
     const totalWords = merge.mergedSets.reduce((acc, d) => acc + (d.items?.length || 0), 0);
+    const formatted = formatSyncChangesMessage(merge.changesSummary);
     setSyncFeedback({
       type: 'success',
-      message: `تم جلب ودمج البيانات بنجاح: تم إضافة ${merge.newWordsCount} مفردة جديدة وتحديث ${merge.updatedWordsCount} مفردة (إجمالي ${totalWords} مفردة).`
+      message: formatted.fullText || `تم جلب ودمج البيانات بنجاح: تم إضافة ${merge.newWordsCount} مفردة جديدة وتحديث ${merge.updatedWordsCount} مفردة (إجمالي ${totalWords} مفردة).`
     });
     setConfirmPullModalOpen(false);
     setPendingPullData(null);
@@ -2329,18 +2332,45 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
             {/* Sync Feedback Message */}
             {syncFeedback && (
               <div
-                className={`p-3.5 rounded-2xl text-xs font-bold border flex items-center gap-2 animate-fade-in ${
+                className={`p-3.5 rounded-2xl text-xs font-bold border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in ${
                   syncFeedback.type === 'success'
                     ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
                     : 'bg-rose-50 dark:bg-rose-950/70 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
                 }`}
               >
-                {syncFeedback.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                <div className="flex items-start gap-2 min-w-0">
+                  {syncFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                  )}
+                  <span className="leading-relaxed">{syncFeedback.message}</span>
+                </div>
+
+                {syncFeedback.type === 'error' && syncFeedback.message.includes('Authorized Domains') && (
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.hostname);
+                        setCopiedDomain(true);
+                        setTimeout(() => setCopiedDomain(false), 2500);
+                      }}
+                      className="px-2.5 py-1 text-[11px] font-extrabold bg-rose-200/80 hover:bg-rose-300 dark:bg-rose-900/60 dark:hover:bg-rose-800 text-rose-900 dark:text-rose-100 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {copiedDomain ? 'تم النسخ ✓' : 'نسخ النطاق'}
+                    </button>
+                    <a
+                      href="https://console.firebase.google.com/project/gen-lang-client-0584558035/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Firebase Console</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
                 )}
-                <span>{syncFeedback.message}</span>
               </div>
             )}
 
