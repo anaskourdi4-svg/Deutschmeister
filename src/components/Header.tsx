@@ -28,6 +28,7 @@ import {
   CloudCheck,
   CloudAlert,
 } from 'lucide-react';
+import { BranchInfoModal } from './BranchInfoModal';
 
 export interface AutoSyncDisplayStatus {
   status: 'idle' | 'pending' | 'syncing' | 'synced' | 'error' | 'unlinked' | 'unauthenticated';
@@ -64,6 +65,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
+  const [branchModalTab, setBranchModalTab] = useState<'dev' | 'main'>('dev');
   const [isSrsActive, setIsSrsActive] = useState(true);
   const [activeQuizFilter, setActiveQuizFilter] = useState<'all' | 'noun' | 'verb' | 'adjective' | 'expression' | 'others'>('all');
   const [activeLevelFilter, setActiveLevelFilter] = useState<'all' | 'A1' | 'A2' | 'B1' | 'B2'>('all');
@@ -74,14 +77,8 @@ export const Header: React.FC<HeaderProps> = ({
     return saved === 'newest' ? 'newest' : 'alphabetical';
   });
 
-  // Deployment branch detection ('dev' or 'main')
-  const [deployBranch, setDeployBranch] = useState<'main' | 'dev'>(() => {
-    try {
-      const saved = localStorage.getItem('deutsch_meister_branch_override');
-      if (saved === 'main' || saved === 'dev') return saved;
-    } catch (e) {
-      // ignore
-    }
+  // Deployment branch detection ('dev' or 'main') based on build environment & Git ref
+  const deployBranch: 'main' | 'dev' = (() => {
     const envBranch = (import.meta.env.VITE_DEPLOY_BRANCH || '').toLowerCase().trim();
     if (envBranch.includes('dev')) return 'dev';
     if (envBranch.includes('main') || envBranch.includes('master')) return 'main';
@@ -92,19 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
       }
     }
     return import.meta.env.DEV ? 'dev' : 'main';
-  });
-
-  const toggleBranch = () => {
-    setDeployBranch(prev => {
-      const next = prev === 'dev' ? 'main' : 'dev';
-      try {
-        localStorage.setItem('deutsch_meister_branch_override', next);
-      } catch (e) {
-        // ignore
-      }
-      return next;
-    });
-  };
+  })();
 
   useEffect(() => {
     const handleSortEvent = (e: Event) => {
@@ -286,13 +271,16 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </h1>
 
-                {/* Deployment Branch Badge (dev in green, main as plain word) */}
+                {/* Deployment Branch Badge (clickable to view commit details or sync status) */}
                 {deployBranch === 'dev' ? (
                   <button
                     type="button"
-                    onClick={toggleBranch}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-tight bg-emerald-50 text-emerald-600 border border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-400 dark:border-emerald-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 active:scale-95 shadow-2xs"
-                    title="الفرع: dev (انقر للتبديل بين dev و main للمعاينة)"
+                    onClick={() => {
+                      setBranchModalTab('dev');
+                      setIsBranchModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-tight bg-emerald-50 text-emerald-600 border border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-400 dark:border-emerald-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 active:scale-95 shadow-2xs"
+                    title="فرع dev - انقر لعرض أسماء آخر 3 تعديلات وتواريخها"
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     dev
@@ -300,9 +288,12 @@ export const Header: React.FC<HeaderProps> = ({
                 ) : (
                   <button
                     type="button"
-                    onClick={toggleBranch}
-                    className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold tracking-tight text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 active:scale-95"
-                    title="الفرع: main (انقر للتبديل بين dev و main للمعاينة)"
+                    onClick={() => {
+                      setBranchModalTab('main');
+                      setIsBranchModalOpen(true);
+                    }}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold tracking-tight text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95"
+                    title="فرع main - انقر لعرض تاريخ آخر مزامنة من dev"
                   >
                     main
                   </button>
@@ -743,6 +734,13 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       )}
+
+      {/* Branch Info & Sync Details Modal */}
+      <BranchInfoModal
+        isOpen={isBranchModalOpen}
+        onClose={() => setIsBranchModalOpen(false)}
+        initialTab={branchModalTab}
+      />
     </header>
   );
 };
