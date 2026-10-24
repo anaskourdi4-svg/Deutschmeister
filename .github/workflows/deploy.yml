@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "dev"]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_DEPLOY_BRANCH: ${{ github.ref_name }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
