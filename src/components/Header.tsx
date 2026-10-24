@@ -74,6 +74,38 @@ export const Header: React.FC<HeaderProps> = ({
     return saved === 'newest' ? 'newest' : 'alphabetical';
   });
 
+  // Deployment branch detection ('dev' or 'main')
+  const [deployBranch, setDeployBranch] = useState<'main' | 'dev'>(() => {
+    try {
+      const saved = localStorage.getItem('deutsch_meister_branch_override');
+      if (saved === 'main' || saved === 'dev') return saved;
+    } catch (e) {
+      // ignore
+    }
+    const envBranch = (import.meta.env.VITE_DEPLOY_BRANCH || '').toLowerCase().trim();
+    if (envBranch.includes('dev')) return 'dev';
+    if (envBranch.includes('main') || envBranch.includes('master')) return 'main';
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname.toLowerCase();
+      if (host.includes('dev') || host.includes('localhost') || host.includes('127.0.0.1')) {
+        return 'dev';
+      }
+    }
+    return import.meta.env.DEV ? 'dev' : 'main';
+  });
+
+  const toggleBranch = () => {
+    setDeployBranch(prev => {
+      const next = prev === 'dev' ? 'main' : 'dev';
+      try {
+        localStorage.setItem('deutsch_meister_branch_override', next);
+      } catch (e) {
+        // ignore
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     const handleSortEvent = (e: Event) => {
       const customEv = e as CustomEvent<string>;
@@ -253,6 +285,28 @@ export const Header: React.FC<HeaderProps> = ({
                     {activeSetGroup || 'A1'}
                   </span>
                 </h1>
+
+                {/* Deployment Branch Badge (dev in green, main as plain word) */}
+                {deployBranch === 'dev' ? (
+                  <button
+                    type="button"
+                    onClick={toggleBranch}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-tight bg-emerald-50 text-emerald-600 border border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-400 dark:border-emerald-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 active:scale-95 shadow-2xs"
+                    title="الفرع: dev (انقر للتبديل بين dev و main للمعاينة)"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    dev
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleBranch}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold tracking-tight text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 cursor-pointer select-none transition-all hover:scale-105 active:scale-95"
+                    title="الفرع: main (انقر للتبديل بين dev و main للمعاينة)"
+                  >
+                    main
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
                 <span className="hidden sm:inline">German Vocabulary Trainer</span>
