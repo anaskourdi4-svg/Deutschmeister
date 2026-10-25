@@ -27,7 +27,9 @@ import {
   RefreshCw,
   CloudCheck,
   CloudAlert,
+  User as UserIcon,
 } from 'lucide-react';
+import { User } from 'firebase/auth';
 import { BranchInfoModal } from './BranchInfoModal';
 
 export interface AutoSyncDisplayStatus {
@@ -47,6 +49,8 @@ interface HeaderProps {
   activeSetName?: string;
   activeSetGroup?: string;
   autoSyncStatus?: AutoSyncDisplayStatus;
+  currentUser?: User | null;
+  isGuest?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -60,6 +64,8 @@ export const Header: React.FC<HeaderProps> = ({
   activeSetName,
   activeSetGroup,
   autoSyncStatus,
+  currentUser,
+  isGuest,
 }) => {
 
   const [isNavOpen, setIsNavOpen] = useState(false);
@@ -316,6 +322,27 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Left Side (الجانب الأيسر): Active Tab Badge & 3-Dots Tab Settings Menu */}
           <div className="flex items-center gap-2.5">
+
+            {/* Guest Mode vs Personal Google Account Badge */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('decks')}
+              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-2xs ${
+                currentUser
+                  ? 'bg-blue-50 text-blue-900 border-blue-200 hover:bg-blue-100 dark:bg-blue-950/70 dark:text-blue-200 dark:border-blue-800'
+                  : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-800'
+              }`}
+              title={
+                currentUser
+                  ? `أنت في الحساب الشخصي (${currentUser.email || currentUser.displayName}). المفردات مرتبطة حصراً بـ Google Drive. انقر لإدارة الجداول.`
+                  : 'أنت في وضع الزائر. البيانات مخزنة في كاش المتصفح فقط. انقر لتسجيل الدخول وربط Google Drive.'
+              }
+            >
+              <UserIcon className={`w-3.5 h-3.5 ${currentUser ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`} />
+              <span className="text-[11px] font-semibold truncate max-w-[120px] md:max-w-[160px]">
+                {currentUser ? (currentUser.displayName || currentUser.email?.split('@')[0] || 'حسابي (Drive)') : 'وضع الزائر (محلي)'}
+              </span>
+            </button>
 
             {/* Google Sheets Auto-Sync Status Chip */}
             {autoSyncStatus && (

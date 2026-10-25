@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, Layers } from 'lucide-react';
+import { CheckCircle2, Layers, CloudCheck, FolderKanban, PlusCircle } from 'lucide-react';
+import { User } from 'firebase/auth';
 import { VocabItem, ActiveTab, VocabSet, QuizQuestionSettings, DEFAULT_QUIZ_SETTINGS, getVocabItemKey } from './types';
 import { INITIAL_A1_VOCAB } from './data/defaultA1Vocab';
 import { Header } from './components/Header';
@@ -11,9 +12,22 @@ import { SettingsManager } from './components/SettingsManager';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { SyncNotificationToast } from './components/SyncNotificationToast';
 import { useAutoSync } from './hooks/useAutoSync';
+import {
+  initGoogleAuth,
+  getSavedLinkedSheet,
+  LinkedSpreadsheetInfo,
+} from './services/googleSheets';
 
-const SETS_STORAGE_KEY = 'deutsch_meister_vocab_sets_v3';
-const ACTIVE_SET_KEY = 'deutsch_meister_active_set_v3';
+// Guest mode storage keys (local browser cache)
+const GUEST_SETS_KEY = 'deutsch_meister_guest_vocab_sets_v4';
+const GUEST_ACTIVE_SET_KEY = 'deutsch_meister_guest_active_set_v4';
+const LEGACY_SETS_KEY = 'deutsch_meister_vocab_sets_v3';
+const LEGACY_ACTIVE_KEY = 'deutsch_meister_active_set_v3';
+
+// Google Drive storage keys (per-spreadsheet isolated cache)
+const DRIVE_CACHE_PREFIX = 'deutsch_meister_drive_sets_';
+const DRIVE_ACTIVE_PREFIX = 'deutsch_meister_drive_active_';
+
 const ACTIVE_TAB_KEY = 'deutsch_meister_active_tab_v2';
 const QUIZ_SETTINGS_KEY = 'deutsch_meister_quiz_settings_v1';
 
@@ -64,6 +78,49 @@ const DEFAULT_DEMO_SETS: VocabSet[] = [
   },
 ];
 
+// Guest Cache Loaders
+const loadGuestSets = (): VocabSet[] => {
+  try {
+    const saved = localStorage.getItem(GUEST_SETS_KEY) || localStorage.getItem(LEGACY_SETS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const filtered = filterValidVocabItems(parsed).filter(
+          s => s.id !== 'set_validation_demo' && s.levelGroup !== 'Validation'
+        );
+        if (filtered.length > 0) return filtered;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load guest sets:', e);
+  }
+  return DEFAULT_DEMO_SETS;
+};
+
+const loadGuestActiveSetId = (): string => {
+  try {
+    const saved = localStorage.getItem(GUEST_ACTIVE_SET_KEY) || localStorage.getItem(LEGACY_ACTIVE_KEY);
+    if (saved) return saved;
+  } catch (e) {}
+  return DEFAULT_DEMO_SETS[0].id;
+};
+
+// Drive Cache Loader
+const loadDriveSets = (spreadsheetId: string): VocabSet[] => {
+  try {
+    const saved = localStorage.getItem(DRIVE_CACHE_PREFIX + spreadsheetId);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return filterValidVocabItems(parsed);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load drive sets for sheet:', spreadsheetId, e);
+  }
+  return [];
+};
+
 export default function App() {
   // Persist activeTab so syncing or reloading never unexpectedly forces user back to quiz
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
@@ -89,39 +146,15 @@ export default function App() {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Vocab Sets state
-  const [vocabSets, setVocabSets] = useState<VocabSet[]>(() => {
-    try {
-      const savedSets = localStorage.getItem(SETS_STORAGE_KEY);
-      if (savedSets) {
-        const parsed = JSON.parse(savedSets);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const filtered = filterValidVocabItems(parsed).filter(
-            s => s.id !== 'set_validation_demo' && s.levelGroup !== 'Validation'
-          );
-          if (filtered.length > 0) {
-            return filtered;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load vocab sets:', e);
-    }
-    return DEFAULT_DEMO_SETS;
-  });
+  // Authentication & Linked Sheet State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [linkedSheet, setLinkedSheet] = useState<LinkedSpreadsheetInfo | null>(() => getSavedLinkedSheet());
+
+  // Vocab Sets state - starts with guest sets by default
+  const [vocabSets, setVocabSets] = useState<VocabSet[]>(() => loadGuestSets());
 
   // Active Set ID state
-  const [activeSetId, setActiveSetId] = useState<string>(() => {
-    try {
-      const savedActive = localStorage.getItem(ACTIVE_SET_KEY);
-      if (savedActive) {
-        return savedActive;
-      }
-    } catch (e) {
-      console.warn('Failed to load active set ID:', e);
-    }
-    return DEFAULT_DEMO_SETS[0].id;
-  });
+  const [activeSetId, setActiveSetId] = useState<string>(() => loadGuestActiveSetId());
 
   // Quiz Question Settings state
   const [quizSettings, setQuizSettings] = useState<QuizQuestionSettings>(() => {
@@ -157,19 +190,101 @@ export default function App() {
     }
   }, [quizSettings]);
 
-  // Ensure activeSetId is valid
-  const currentSet = vocabSets.find(s => s.id === activeSetId) || vocabSets[0] || DEFAULT_DEMO_SETS[0];
-  const vocabList = (currentSet.items || []).filter(isValidVocabItem);
+  // 1. Listen for Google Auth state changes to isolate Guest vs Personal Account (Drive) modes
+  useEffect(() => {
+    const unsub = initGoogleAuth(
+      (user) => {
+        setCurrentUser(user);
+        const sheet = getSavedLinkedSheet(user.uid);
+        setLinkedSheet(sheet);
+        if (sheet) {
+          const driveSets = loadDriveSets(sheet.spreadsheetId);
+          if (driveSets.length > 0) {
+            setVocabSets(driveSets);
+            const savedDriveActive = localStorage.getItem(DRIVE_ACTIVE_PREFIX + sheet.spreadsheetId);
+            if (savedDriveActive && driveSets.some(s => s.id === savedDriveActive)) {
+              setActiveSetId(savedDriveActive);
+            } else {
+              setActiveSetId(driveSets[0].id);
+            }
+          } else {
+            // Personal account with linked sheet: adopt empty set until remote pull completes
+            setVocabSets([]);
+          }
+        } else {
+          // Logged into Google account, but no sheet linked yet:
+          // Strictly isolate from guest cache - show empty Drive state
+          setVocabSets([]);
+        }
+      },
+      () => {
+        // Guest mode (unauthenticated) - load guest browser cache
+        setCurrentUser(null);
+        setLinkedSheet(null);
+        const guestSets = loadGuestSets();
+        setVocabSets(guestSets);
+        setActiveSetId(loadGuestActiveSetId());
+      }
+    );
+    return () => unsub();
+  }, []);
 
-  // Save vocabSets and activeSetId to localStorage
+  // 2. Listen for auth-mode-changed event (from DecksManager or logout)
+  useEffect(() => {
+    const handleAuthModeChanged = (e: Event) => {
+      const ce = e as CustomEvent<{ mode: string; spreadsheetId?: string }>;
+      if (!ce.detail) return;
+      if (ce.detail.mode === 'guest') {
+        setCurrentUser(null);
+        setLinkedSheet(null);
+        const guestSets = loadGuestSets();
+        setVocabSets(guestSets);
+        setActiveSetId(loadGuestActiveSetId());
+      } else if (ce.detail.mode === 'drive' && ce.detail.spreadsheetId) {
+        const sheet = getSavedLinkedSheet(currentUser?.uid);
+        setLinkedSheet(sheet);
+        const cached = loadDriveSets(ce.detail.spreadsheetId);
+        if (cached.length > 0) {
+          setVocabSets(cached);
+          setActiveSetId(cached[0].id);
+        }
+      } else if (ce.detail.mode === 'drive_unlinked') {
+        setLinkedSheet(null);
+        setVocabSets([]);
+      }
+    };
+    window.addEventListener('app:auth-mode-changed', handleAuthModeChanged);
+    return () => window.removeEventListener('app:auth-mode-changed', handleAuthModeChanged);
+  }, [currentUser]);
+
+  // 3. Save vocabSets and activeSetId to the appropriate storage scope (Guest vs Drive)
   useEffect(() => {
     try {
-      localStorage.setItem(SETS_STORAGE_KEY, JSON.stringify(vocabSets));
-      localStorage.setItem(ACTIVE_SET_KEY, activeSetId);
+      if (!currentUser) {
+        // Guest mode: save to guest localStorage cache
+        localStorage.setItem(GUEST_SETS_KEY, JSON.stringify(vocabSets));
+        localStorage.setItem(GUEST_ACTIVE_SET_KEY, activeSetId);
+      } else if (linkedSheet) {
+        // Personal Account mode: save exclusively to drive spreadsheet cache
+        localStorage.setItem(DRIVE_CACHE_PREFIX + linkedSheet.spreadsheetId, JSON.stringify(vocabSets));
+        localStorage.setItem(DRIVE_ACTIVE_PREFIX + linkedSheet.spreadsheetId, activeSetId);
+      }
     } catch (e) {
       console.warn('Failed to save vocab sets:', e);
     }
-  }, [vocabSets, activeSetId]);
+  }, [vocabSets, activeSetId, currentUser, linkedSheet]);
+
+  // Ensure currentSet has a safe fallback even if vocabSets is empty
+  const currentSet: VocabSet =
+    vocabSets.find(s => s.id === activeSetId) ||
+    vocabSets[0] || {
+      id: 'empty_deck',
+      name: currentUser ? (linkedSheet ? linkedSheet.spreadsheetTitle : 'لا توجد حزم مربوطة') : 'حزمة المفردات',
+      levelGroup: 'General',
+      createdAt: new Date().toISOString(),
+      items: [],
+    };
+  const vocabList = (currentSet.items || []).filter(isValidVocabItem);
 
   // Update items of active set
   const updateCurrentSetItems = (updater: (prevItems: VocabItem[]) => VocabItem[]) => {
@@ -468,10 +583,38 @@ export default function App() {
           message: autoSync.statusMessage,
           lastSyncedAt: autoSync.lastSyncedAt,
         }}
+        currentUser={currentUser}
+        isGuest={!currentUser}
       />
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        {/* Account Mode Status Banner when Logged into Google without linked sheet or with empty deck */}
+        {currentUser && (!linkedSheet || vocabSets.length === 0) && activeTab !== 'decks' && (
+          <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/40 border border-blue-200 dark:border-blue-800 text-slate-800 dark:text-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-blue-600 text-white rounded-xl shadow-xs shrink-0">
+                <CloudCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-blue-950 dark:text-blue-100">
+                  الحساب الشخصي: تظهر المفردات المرتبطة حصراً بـ Google Drive
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 max-w-xl leading-relaxed">
+                  أنت مسجل الدخول بحساب Google. لم يتم ربط جدول حتى الآن أو الجدول فارغ. قم بإنشاء جدول جديد فارغ أو ربط جدول موجود من Google Drive للبدء.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('decks')}
+              className="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>إدارة وتوصيل الجداول (Database)</span>
+            </button>
+          </div>
+        )}
 
         <div className={activeTab === 'quiz' ? 'block' : 'hidden'}>
           <FlashcardQuiz

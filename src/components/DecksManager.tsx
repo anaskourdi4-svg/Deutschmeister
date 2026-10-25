@@ -33,6 +33,7 @@ import {
   Link,
   Unlink,
   Sparkles,
+  PlusCircle,
 } from 'lucide-react';
 import {
   initGoogleAuth,
@@ -40,6 +41,7 @@ import {
   googleLogout,
   listUserSpreadsheets,
   createSpreadsheetWithDecks,
+  createEmptySpreadsheet,
   syncAllDecksToGoogleSheets,
   importAllDecksFromGoogleSheets,
   getSavedLinkedSheet,
@@ -142,7 +144,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [driveFiles, setDriveFiles] = useState<DriveSpreadsheetFile[]>([]);
   const [isLoadingDriveFiles, setIsLoadingDriveFiles] = useState(false);
   const [manualSheetInput, setManualSheetInput] = useState('');
-  const [newSheetTitle, setNewSheetTitle] = useState('DeutschMeister - German Vocabulary & Mastery');
+  const [newSheetTitle, setNewSheetTitle] = useState('DeutschMeister - German Vocabulary');
+  const [newSheetInitialTab, setNewSheetInitialTab] = useState('Vocabulary Deck');
   const [syncModalTab, setSyncModalTab] = useState<'status' | 'create' | 'link'>('status');
   const [copiedDomain, setCopiedDomain] = useState(false);
 
@@ -204,13 +207,16 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   };
 
   const handleGoogleLogout = async () => {
+    saveLinkedSheet(null);
+    setLinkedSheet(null);
     await googleLogout();
     setCurrentUser(null);
     setCurrentAccessToken(null);
     setDriveFiles([]);
+    window.dispatchEvent(new CustomEvent('app:auth-mode-changed', { detail: { mode: 'guest' } }));
   };
 
-  // Create brand new master spreadsheet in Google Drive
+  // Create brand new EMPTY master spreadsheet in Google Drive
   const handleCreateNewMasterSheet = async () => {
     if (!currentAccessToken) {
       handleGoogleLogin();
@@ -219,17 +225,23 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
     setIsSyncing(true);
     setSyncFeedback(null);
     try {
-      const info = await createSpreadsheetWithDecks(
-        newSheetTitle || 'DeutschMeister - German Vocabulary & Mastery',
-        vocabSets,
+      const info = await createEmptySpreadsheet(
+        newSheetTitle || 'DeutschMeister - German Vocabulary',
+        newSheetInitialTab || 'Vocabulary Deck',
         currentAccessToken
       );
       setLinkedSheet(info);
+      saveLinkedSheet(info, currentUser?.uid);
+      if (info.mergedDecks && info.mergedDecks.length > 0) {
+        onSyncAllSets?.(info.mergedDecks);
+        onSelectVocabSet(info.mergedDecks[0].id);
+      }
       setSyncFeedback({
         type: 'success',
-        message: `تم إنشاء جدول Google Sheet بنجاح في درايف مع ${info.deckCount} تبويب (${info.wordCount} مفردة مع كافة البيانات التقنية)!`
+        message: `تم إنشاء جدول Google Sheet جديد وفارغ بنجاح في Google Drive مع تبويب "${newSheetInitialTab || 'Vocabulary Deck'}" (فارغ تماماً وجاهز لإضافة مفرداتك الخاصة)!`
       });
       setSyncModalTab('status');
+      window.dispatchEvent(new CustomEvent('app:auth-mode-changed', { detail: { mode: 'drive', spreadsheetId: info.spreadsheetId } }));
     } catch (err: any) {
       console.warn('Create sheet notice:', err);
       setSyncFeedback({ type: 'error', message: err.message || 'فشل إنشاء الجدول في Google Drive.' });
@@ -261,15 +273,21 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
         lastSyncedAt: new Date().toISOString(),
         deckCount: result.decks.length,
         wordCount: totalWords,
+        mergedDecks: result.decks,
       };
       setLinkedSheet(info);
-      saveLinkedSheet(info);
+      saveLinkedSheet(info, currentUser?.uid);
+      if (result.decks && result.decks.length > 0) {
+        onSyncAllSets?.(result.decks);
+        onSelectVocabSet(result.decks[0].id);
+      }
       setSyncFeedback({
         type: 'success',
-        message: `تم ربط الجدول بنجاح: "${result.title}" (${result.decks.length} تبويب، ${totalWords} مفردة).`
+        message: `تم ربط الجدول بنجاح: "${result.title}" (${result.decks.length} تبويب، ${totalWords} مفردة). تم تحميل مفرداتك من Google Drive حصراً!`
       });
       setManualSheetInput('');
       setSyncModalTab('status');
+      window.dispatchEvent(new CustomEvent('app:auth-mode-changed', { detail: { mode: 'drive', spreadsheetId: cleanId } }));
     } catch (err: any) {
       console.warn('Link sheet notice:', err);
       setSyncFeedback({ type: 'error', message: err.message || 'فشل ربط الجدول. يرجى التأكد من صحة الرابط والصلاحيات.' });
@@ -343,9 +361,11 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   };
 
   const handleUnlinkSheet = () => {
-    saveLinkedSheet(null);
+    saveLinkedSheet(null, currentUser?.uid);
     setLinkedSheet(null);
-    setSyncFeedback({ type: 'success', message: 'تم إلغاء ربط الجدول.' });
+    onSyncAllSets?.([]);
+    setSyncFeedback({ type: 'success', message: 'تم إلغاء ربط الجدول بنجاح. أصبحت القائمة فارغة بانتظار ربط أو إنشاء جدول آخر في Drive.' });
+    window.dispatchEvent(new CustomEvent('app:auth-mode-changed', { detail: { mode: 'drive_unlinked' } }));
   };
 
   useEffect(() => {
@@ -2557,20 +2577,30 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   </span>
                 </div>
 
-                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
-                  <div className="font-extrabold text-slate-800 dark:text-slate-200">
-                    التبويبات التي سيتم إنشاؤها فوراً ({vocabSets.length} حزم):
+                <div className="space-y-1.5">
+                  <label className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">
+                    اسم التبويب الأولي (Deck Tab Name):
+                  </label>
+                  <input
+                    type="text"
+                    value={newSheetInitialTab}
+                    onChange={e => setNewSheetInitialTab(e.target.value)}
+                    placeholder="Vocabulary Deck"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] text-slate-400 block">
+                    يمكنك لاحقاً إضافة تبويبات أخرى مباشرة من داخل Google Sheets أو التطبيق.
+                  </span>
+                </div>
+
+                <div className="p-3.5 bg-emerald-50/70 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs space-y-1.5">
+                  <div className="font-extrabold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>جدول جديد فارغ ومستقل تماماً:</span>
                   </div>
-                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
-                    {vocabSets.map((s, idx) => (
-                      <span
-                        key={s.id || idx}
-                        className="px-2.5 py-1 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-bold"
-                      >
-                        {s.name} ({s.items?.length || 0})
-                      </span>
-                    ))}
-                  </div>
+                  <p className="text-emerald-800/90 dark:text-emerald-300/90 leading-relaxed text-[11px]">
+                    سيتم إنشاء جدول Google Sheet جديد وفارغ في Google Drive يحتوي فقط على رؤوس الأعمدة الـ 17 المنسقة، دون ربط أو نسخ أي مفردات أو تبويبات سابقة. سيبدأ الجدول نظيفاً تماماً (0 مفردات) لملئه بمفرداتك الخاصة حصراً.
+                  </p>
                 </div>
 
                 <button
@@ -2582,12 +2612,12 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   {isSyncing ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>جاري إنشاء الجدول في Google Drive ومزامنة البيانات...</span>
+                      <span>جاري إنشاء الجدول الفارغ في Google Drive...</span>
                     </>
                   ) : (
                     <>
-                      <FileSpreadsheet className="w-4 h-4" />
-                      <span>إنشاء الجدول في Drive ومزامنة كافة الحزم الآن</span>
+                      <PlusCircle className="w-4 h-4" />
+                      <span>إنشاء جدول فارغ جديد في Google Drive</span>
                     </>
                   )}
                 </button>

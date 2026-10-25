@@ -547,8 +547,39 @@ export function saveDeckTabMapping(spreadsheetId: string, mapping: Record<string
   }
 }
 
-export function getSavedLinkedSheet(): LinkedSpreadsheetInfo | null {
+const getUserLinkedSheetKey = (uid: string) => `deutsch_meister_user_linked_sheet_${uid}`;
+
+export function getUserLinkedSheet(uid: string): LinkedSpreadsheetInfo | null {
   try {
+    const raw = localStorage.getItem(getUserLinkedSheetKey(uid));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.spreadsheetId) return parsed;
+    }
+  } catch (e) {
+    console.warn('Failed to parse user linked sheet info:', e);
+  }
+  return null;
+}
+
+export function saveUserLinkedSheet(uid: string, info: LinkedSpreadsheetInfo | null) {
+  try {
+    if (!info) {
+      localStorage.removeItem(getUserLinkedSheetKey(uid));
+    } else {
+      localStorage.setItem(getUserLinkedSheetKey(uid), JSON.stringify(info));
+    }
+  } catch (e) {
+    console.warn('Failed to save user linked sheet info:', e);
+  }
+}
+
+export function getSavedLinkedSheet(uid?: string): LinkedSpreadsheetInfo | null {
+  try {
+    if (uid) {
+      const userSpecific = getUserLinkedSheet(uid);
+      if (userSpecific) return userSpecific;
+    }
     const raw = localStorage.getItem(LINKED_SHEET_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
@@ -560,12 +591,15 @@ export function getSavedLinkedSheet(): LinkedSpreadsheetInfo | null {
   return null;
 }
 
-export function saveLinkedSheet(info: LinkedSpreadsheetInfo | null) {
+export function saveLinkedSheet(info: LinkedSpreadsheetInfo | null, uid?: string) {
   try {
     if (!info) {
       localStorage.removeItem(LINKED_SHEET_KEY);
+      if (uid) localStorage.removeItem(getUserLinkedSheetKey(uid));
     } else {
       localStorage.setItem(LINKED_SHEET_KEY, JSON.stringify(info));
+      if (uid) localStorage.setItem(getUserLinkedSheetKey(uid), JSON.stringify(info));
+      else if (auth.currentUser?.uid) localStorage.setItem(getUserLinkedSheetKey(auth.currentUser.uid), JSON.stringify(info));
     }
   } catch (e) {
     console.warn('Failed to save linked sheet info:', e);
@@ -679,6 +713,139 @@ export async function listUserSpreadsheets(accessToken: string): Promise<DriveSp
 
   const data = await response.json();
   return data.files || [];
+}
+
+/**
+ * Create a brand new EMPTY Google Spreadsheet in Google Drive.
+ * Does NOT copy any existing vocabulary items or tabs.
+ * Writes only the 17 standard header columns (SHEET_HEADERS_17) to row 1.
+ * Returns a single clean starter deck with items: [].
+ */
+export async function createEmptySpreadsheet(
+  title: string,
+  tabTitle: string = 'Vocabulary Deck',
+  accessToken: string
+): Promise<LinkedSpreadsheetInfo> {
+  const cleanTabTitle = sanitizeSheetTabTitle(tabTitle || 'Vocabulary Deck', 0);
+  const cleanTitle = title.trim() || 'DeutschMeister - German Vocabulary';
+
+  // 1. Create spreadsheet with one single sheet
+  const createRes = await safeGoogleFetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      properties: {
+        title: cleanTitle,
+      },
+      sheets: [
+        {
+          properties: {
+            title: cleanTabTitle,
+            gridProperties: {
+              frozenRowCount: 1,
+            },
+          },
+        },
+      ],
+    }),
+  }, accessToken);
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`فشل إنشاء جدول Google Sheet جديد: ${createRes.statusText} (${errText})`);
+  }
+
+  const createdData = await createRes.json();
+  const spreadsheetId = createdData.spreadsheetId;
+  const spreadsheetUrl = createdData.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  const sheetId = createdData.sheets?.[0]?.properties?.sheetId ?? 0;
+
+  // 2. Write ONLY header row (no data rows/words)
+  try {
+    await safeGoogleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          valueInputOption: 'USER_ENTERED',
+          data: [
+            {
+              range: `'${cleanTabTitle}'!A1:Q1`,
+              majorDimension: 'ROWS',
+              values: [SHEET_HEADERS_17],
+            },
+          ],
+        }),
+      },
+      accessToken
+    );
+
+    // 3. Format header row (Bold + background color)
+    await safeGoogleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 0,
+                endRowIndex: 1,
+                startColumnIndex: 0,
+                endColumnIndex: SHEET_HEADERS_17.length,
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: { red: 0.93, green: 0.95, blue: 0.99 },
+                  textFormat: { bold: true, fontSize: 10 },
+                },
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)',
+            },
+          },
+        ],
+      }),
+    }, accessToken);
+  } catch (writeErr) {
+    console.warn('Notice setting up initial header:', writeErr);
+  }
+
+  // 4. Create fresh, completely empty deck for the app
+  const cleanDeck: VocabSet = {
+    id: `deck_gs_${sheetId}_${Date.now()}`,
+    name: cleanTabTitle,
+    levelGroup: 'A1',
+    createdAt: new Date().toISOString(),
+    items: [],
+    googleSheetTabId: sheetId,
+    lastSyncedTabName: cleanTabTitle,
+  };
+
+  const mapping: Record<string, { sheetId: number; tabTitle: string }> = {
+    [cleanDeck.id]: { sheetId, tabTitle: cleanTabTitle },
+  };
+  saveDeckTabMapping(spreadsheetId, mapping);
+
+  const info: LinkedSpreadsheetInfo = {
+    spreadsheetId,
+    spreadsheetTitle: createdData.properties?.title || cleanTitle,
+    spreadsheetUrl,
+    lastSyncedAt: new Date().toISOString(),
+    deckCount: 1,
+    wordCount: 0,
+    mergedDecks: [cleanDeck],
+  };
+
+  saveLinkedSheet(info);
+  return info;
 }
 
 /**

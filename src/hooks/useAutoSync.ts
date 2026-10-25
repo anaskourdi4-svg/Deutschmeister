@@ -126,6 +126,16 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
 
       const result = await importAllDecksFromGoogleSheets(sheet.spreadsheetId, token);
       if (result.decks && result.decks.length > 0) {
+        // If current sets in app are empty (or unlinked), adopt remote decks directly from Drive!
+        if (latestVocabSetsRef.current.length === 0) {
+          isRemoteUpdatingRef.current = true;
+          lastPushedSnapshotRef.current = computeVocabSetsSnapshot(result.decks);
+          onSyncAllSets(result.decks);
+          setLastSyncedAt(new Date().toISOString());
+          updateStatus('synced', `تم تحميل ${result.decks.length} حزمة من Google Drive`);
+          return;
+        }
+
         const merge = mergeRemoteDecksWithLocalDecks(latestVocabSetsRef.current, result.decks);
         if (merge.hasChanges) {
           isRemoteUpdatingRef.current = true;
@@ -164,13 +174,13 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
       (user, token) => {
         setCurrentUser(user);
         setAccessToken(token);
-        const saved = getSavedLinkedSheet();
+        const saved = getSavedLinkedSheet(user.uid);
         setLinkedSheet(saved);
         if (!saved) {
-          updateStatus('unlinked', 'لم يتم ربط جدول بعد');
+          updateStatus('unlinked', 'لم يتم ربط جدول Google Drive بعد');
         } else {
           updateStatus('synced', 'المزامنة التلقائية مفعلة ونشطة');
-          // 1. Automatic pull when opening the app!
+          // Automatic pull when opening the app!
           if (!hasDoneInitialPullRef.current) {
             hasDoneInitialPullRef.current = true;
             setTimeout(() => {
@@ -182,7 +192,8 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
       () => {
         setCurrentUser(null);
         setAccessToken(null);
-        updateStatus('unauthenticated', 'يرجى تسجيل الدخول لتفعيل المزامنة التلقائية');
+        setLinkedSheet(null);
+        updateStatus('unauthenticated', 'وضع الزائر: الحفظ محلياً في كاش المتصفح');
       }
     );
     return () => unsub();
