@@ -34,6 +34,9 @@ import {
   Unlink,
   Sparkles,
   PlusCircle,
+  Copy,
+  HelpCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   initGoogleAuth,
@@ -51,6 +54,7 @@ import {
   extractSpreadsheetId,
   mergeRemoteDecksWithLocalDecks,
   formatSyncChangesMessage,
+  GoogleAuthError,
 } from '../services/googleSheets';
 import { User } from 'firebase/auth';
 
@@ -148,6 +152,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [newSheetInitialTab, setNewSheetInitialTab] = useState('Vocabulary Deck');
   const [syncModalTab, setSyncModalTab] = useState<'status' | 'create' | 'link'>('status');
   const [copiedDomain, setCopiedDomain] = useState(false);
+  const [authErrorInfo, setAuthErrorInfo] = useState<GoogleAuthError | null>(null);
+  const [showAuthDiagnostics, setShowAuthDiagnostics] = useState(false);
 
   // Confirmation Modals for Destructive/Mutating Operations
   const [confirmPushModalOpen, setConfirmPushModalOpen] = useState(false);
@@ -184,23 +190,26 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const handleGoogleLogin = async () => {
     setIsAuthLoading(true);
     setSyncFeedback(null);
+    setAuthErrorInfo(null);
     try {
       const res = await googleSignIn();
       if (res) {
         setCurrentUser(res.user);
         setCurrentAccessToken(res.accessToken);
         loadDriveFiles(res.accessToken);
+        setSyncFeedback({
+          type: 'success',
+          message: `مرحباً ${res.user.displayName || res.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
+        });
       }
     } catch (err: any) {
-      if (
-        err?.code === 'auth/popup-closed-by-user' ||
-        err?.code === 'auth/cancelled-popup-request' ||
-        err?.message?.includes('popup-closed-by-user')
-      ) {
-        return;
-      }
       console.warn('Google Sign-In notice:', err);
-      setSyncFeedback({ type: 'error', message: err.message || 'فشل تسجيل الدخول باستخدام حساب Google' });
+      setAuthErrorInfo(err as GoogleAuthError);
+      setIsSyncModalOpen(true);
+      setSyncFeedback({
+        type: 'error',
+        message: err.message || 'فشل تسجيل الدخول باستخدام حساب Google'
+      });
     } finally {
       setIsAuthLoading(false);
     }
@@ -2349,7 +2358,21 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
               </div>
             </div>
 
-            {/* Sync Feedback Message */}
+            {/* Helper toggle: Why might login fail? */}
+            {!currentUser && (
+              <div className="flex items-center justify-between px-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAuthDiagnostics(prev => !prev)}
+                  className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1.5 cursor-pointer"
+                >
+                  <HelpCircle className="w-3.5 h-3.5" />
+                  <span>لماذا قد يفشل تسجيل الدخول؟ (الأسباب الأكثر شيوعاً وحلولها)</span>
+                </button>
+              </div>
+            )}
+
+            {/* General Sync Feedback Message */}
             {syncFeedback && (
               <div
                 className={`p-3.5 rounded-2xl text-xs font-bold border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in ${
@@ -2366,31 +2389,140 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   )}
                   <span className="leading-relaxed">{syncFeedback.message}</span>
                 </div>
+              </div>
+            )}
 
-                {syncFeedback.type === 'error' && syncFeedback.message.includes('Authorized Domains') && (
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            {/* Detailed Diagnostics Card for Authentication Issues */}
+            {(authErrorInfo || showAuthDiagnostics) && (
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs space-y-3.5 animate-fade-in">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
+                  <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>دليل حل مشكلات تسجيل الدخول بحساب Google</span>
+                  </div>
+                  {showAuthDiagnostics && !authErrorInfo && (
                     <button
                       type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(window.location.hostname);
-                        setCopiedDomain(true);
-                        setTimeout(() => setCopiedDomain(false), 2500);
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-extrabold bg-rose-200/80 hover:bg-rose-300 dark:bg-rose-900/60 dark:hover:bg-rose-800 text-rose-900 dark:text-rose-100 rounded-lg transition-colors cursor-pointer"
+                      onClick={() => setShowAuthDiagnostics(false)}
+                      className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold"
                     >
-                      {copiedDomain ? 'تم النسخ ✓' : 'نسخ النطاق'}
+                      إغلاق ✕
                     </button>
-                    <a
-                      href="https://console.firebase.google.com/project/gen-lang-client-0584558035/authentication/settings"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>Firebase Console</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                  )}
+                </div>
+
+                {/* 1. Unauthorized Domain (Most Common in Cloud Run / AI Studio preview) */}
+                <div className={`p-3 rounded-xl border space-y-2 ${
+                  authErrorInfo?.errorType === 'unauthorized-domain'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
+                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                }`}>
+                  <div className="font-extrabold flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      1. النطاق الحالي غير مصرّح به في Firebase (Authorized Domain)
+                    </span>
+                    {authErrorInfo?.errorType === 'unauthorized-domain' && (
+                      <span className="text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-full font-black">
+                        السبب الحالي المؤكد
+                      </span>
+                    )}
                   </div>
-                )}
+                  <p className="text-[11px] leading-relaxed">
+                    Firebase يمنع تسجيل الدخول من أي نطاق (Domain) جديد أو بيئة معاينة سحابية ما لم تتم إضافته إلى قائمة النطاقات المصرح بها.
+                  </p>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-2.5 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                    <div className="min-w-0">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">النطاق الحالي لتطبيقك:</div>
+                      <div className="font-mono text-xs font-black text-blue-700 dark:text-blue-300 truncate">
+                        {typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            navigator.clipboard.writeText(window.location.hostname);
+                            setCopiedDomain(true);
+                            setTimeout(() => setCopiedDomain(false), 2500);
+                          }
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-900 dark:text-blue-100 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>{copiedDomain ? 'تم النسخ ✓' : 'نسخ النطاق'}</span>
+                      </button>
+                      <a
+                        href="https://console.firebase.google.com/project/gen-lang-client-0584558035/authentication/settings"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>فتح إعدادات Firebase</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                    خطوات الحل: انقر «نسخ النطاق» ➔ افتح إعدادات Firebase ➔ في قسم «Authorized domains» اضغط «Add domain» والصق النطاق.
+                  </div>
+                </div>
+
+                {/* 2. Popup Blocked */}
+                <div className={`p-3 rounded-xl border space-y-1.5 ${
+                  authErrorInfo?.errorType === 'popup-blocked'
+                    ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-200 ring-2 ring-rose-400/30'
+                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                }`}>
+                  <div className="font-extrabold flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      2. حظر النوافذ المنبثقة في المتصفح (Pop-up Blocked)
+                    </span>
+                    {authErrorInfo?.errorType === 'popup-blocked' && (
+                      <span className="text-[10px] bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-100 px-2 py-0.5 rounded-full font-black">
+                        السبب الحالي المؤكد
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    تقوم متصفحات Chrome و Safari بحظر النوافذ المنبثقة تلقائياً عند طلبها من بيئة إطار مضمّن (iframe).
+                  </p>
+                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                    الحل: انظر إلى شريط العنوان أعلى المتصفح، اضغط على أيقونة النافذة المحظورة 🚫 واختر «السماح دائماً بالنوافذ المنبثقة من هذا الموقع»، ثم أعد النقر على زر الدخول.
+                  </p>
+                </div>
+
+                {/* 3. Third-party cookies */}
+                <div className={`p-3 rounded-xl border space-y-1.5 ${
+                  authErrorInfo?.errorType === 'cookies'
+                    ? 'bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-800 text-purple-950 dark:text-purple-200 ring-2 ring-purple-400/30'
+                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                }`}>
+                  <div className="font-extrabold text-xs flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-500" />
+                    3. حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies)
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    تتطلب خدمة Firebase المصادقة عبر نافذة منبثقة إمكانية قراءة ملفات تعريف الارتباط. في حال تفعيل "حظر ملفات تعريف ارتباط الطرف الثالث" في إعدادات الخصوصية، تفشل المصادقة فوراً.
+                  </p>
+                </div>
+
+                {/* 4. Google Sign-In Provider in Firebase Console */}
+                <div className={`p-3 rounded-xl border space-y-1.5 ${
+                  authErrorInfo?.errorType === 'operation-not-allowed'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
+                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                }`}>
+                  <div className="font-extrabold text-xs flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-sky-500" />
+                    4. تفعيل مزود Google في Firebase Console
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    يجب التأكد من أن مزود "Google" في لوحة تحكم Firebase (Authentication ➔ Sign-in method) بحالة "مفعّل" (Enabled).
+                  </p>
+                </div>
               </div>
             )}
 

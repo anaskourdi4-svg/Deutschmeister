@@ -84,6 +84,13 @@ export const initGoogleAuth = (
   });
 };
 
+export interface GoogleAuthError extends Error {
+  code?: string;
+  domain?: string;
+  projectId?: string;
+  errorType?: 'unauthorized-domain' | 'popup-blocked' | 'operation-not-allowed' | 'popup-closed' | 'cookies' | 'generic';
+}
+
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
@@ -97,32 +104,73 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     storeAccessToken(cachedAccessToken);
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي';
+    const projectId = firebaseConfig.projectId;
+    const errCode = error?.code || '';
+    const errMessage = error?.message || '';
+
+    const customErr: GoogleAuthError = new Error();
+    customErr.code = errCode;
+    customErr.domain = currentHost;
+    customErr.projectId = projectId;
+
     if (
-      error?.code === 'auth/popup-closed-by-user' ||
-      error?.code === 'auth/cancelled-popup-request' ||
-      error?.message?.includes('popup-closed-by-user')
+      errCode === 'auth/unauthorized-domain' ||
+      errMessage.includes('auth/unauthorized-domain') ||
+      errMessage.includes('unauthorized-domain')
     ) {
-      // User closed the popup before completing sign-in; handle smoothly
-      return null;
-    }
-    if (
-      error?.code === 'auth/unauthorized-domain' ||
-      error?.message?.includes('auth/unauthorized-domain') ||
-      error?.message?.includes('unauthorized-domain')
-    ) {
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي';
-      const projectId = firebaseConfig.projectId;
-      const customErr: any = new Error(
-        `النطاق الحالي (${currentHost}) غير مضاف في قائمة النطاقات المصرح بها (Authorized Domains) في Firebase Authentication. يرجى إضافته من Firebase Console > Authentication > Settings.`
-      );
-      customErr.code = 'auth/unauthorized-domain';
-      customErr.domain = currentHost;
-      customErr.projectId = projectId;
+      customErr.errorType = 'unauthorized-domain';
+      customErr.message = `النطاق الحالي (${currentHost}) غير مصرح به في Firebase Authentication. يجب إضافته إلى قائمة Authorized Domains في لوحة تحكم Firebase.`;
       console.warn('Firebase unauthorized domain:', currentHost, error);
       throw customErr;
     }
+
+    if (
+      errCode === 'auth/popup-blocked' ||
+      errMessage.includes('popup-blocked') ||
+      errMessage.includes('blocked by the browser')
+    ) {
+      customErr.errorType = 'popup-blocked';
+      customErr.message = `قام المتصفح بحظر النافذة المنبثقة (Pop-up Blocked). يرجى النقر على أيقونة النوافذ المنبثقة في شريط العنوان بالمتصفح واختيار "السماح دائماً بالنوافذ المنبثقة من هذا الموقع" ثم إعادة المحاولة.`;
+      console.warn('Firebase popup blocked:', error);
+      throw customErr;
+    }
+
+    if (
+      errCode === 'auth/operation-not-allowed' ||
+      errMessage.includes('operation-not-allowed')
+    ) {
+      customErr.errorType = 'operation-not-allowed';
+      customErr.message = `تسجيل الدخول عبر Google غير مفعّل في لوحة Firebase Console. يرجى تفعيله من: Authentication > Sign-in method > Google.`;
+      console.warn('Firebase Google provider disabled:', error);
+      throw customErr;
+    }
+
+    if (
+      errCode === 'auth/popup-closed-by-user' ||
+      errCode === 'auth/cancelled-popup-request' ||
+      errMessage.includes('popup-closed-by-user')
+    ) {
+      customErr.errorType = 'popup-closed';
+      customErr.message = `تم إغلاق نافذة تسجيل الدخول قبل إتمام المصادقة. يرجى النقر مرة أخرى والمتابعة حتى النهاية.`;
+      console.warn('Google sign-in popup closed by user');
+      throw customErr;
+    }
+
+    if (
+      errCode === 'auth/network-request-failed' ||
+      errMessage.includes('network-request-failed')
+    ) {
+      customErr.errorType = 'cookies';
+      customErr.message = `تعذر الاتصال بـ Firebase. قد يكون السبب حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies) في المتصفح أو انقطاع مؤقت بالإنترنت.`;
+      console.warn('Firebase network / cookie error:', error);
+      throw customErr;
+    }
+
+    customErr.errorType = 'generic';
+    customErr.message = errMessage || 'فشل تسجيل الدخول بحساب Google. يرجى المحاولة مرة أخرى.';
     console.warn('Google Sign-In notice:', error);
-    throw error;
+    throw customErr;
   } finally {
     isSigningIn = false;
   }
