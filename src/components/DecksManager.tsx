@@ -2516,31 +2516,28 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   </div>
                 </div>
 
-                {/* 1. Unauthorized Domain (Authorized Domain in Firebase Console) */}
-                <div className={`p-3 rounded-xl border space-y-2 ${
-                  authErrorInfo?.errorType === 'unauthorized-domain'
-                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
-                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                }`}>
+                {/* 1. Origin Mismatch & Authorized Origins Guide (Google Cloud & Firebase) */}
+                <div className="p-3.5 rounded-xl border space-y-3 bg-amber-50/90 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100">
                   <div className="font-extrabold flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs">
-                      <span className="w-2 h-2 rounded-full bg-amber-500" />
-                      1. النطاق الحالي غير مصرّح به في Firebase (Authorized Domain)
+                    <span className="flex items-center gap-1.5 text-xs text-amber-900 dark:text-amber-200">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                      حل خطأ (Error 400: origin_mismatch) في صفحة Google
                     </span>
-                    {authErrorInfo?.errorType === 'unauthorized-domain' && (
-                      <span className="text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-full font-black">
-                        السبب الحالي المؤكد
-                      </span>
-                    )}
+                    <span className="text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-full font-black">
+                      مطلوب لمرة واحدة فقط
+                    </span>
                   </div>
-                  <p className="text-[11px] leading-relaxed">
-                    Firebase يمنع تسجيل الدخول من أي نطاق (Domain) جديد ما لم تتم إضافته إلى قائمة النطاقات المصرح بها.
+                  <p className="text-[11px] leading-relaxed text-slate-700 dark:text-slate-300">
+                    أنت الآن في الخطوة الأخيرة! Google يطلب إضافة أصل الرابط (JavaScript Origin) إلى قائمة الأصول المصرح بها في <strong>Google Cloud Console</strong> لكي يسمح للحساب بتسجيل الدخول:
                   </p>
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-2.5 bg-slate-100 dark:bg-slate-800 rounded-lg">
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-2.5 bg-white dark:bg-slate-900/90 rounded-xl border border-amber-200 dark:border-amber-900">
                     <div className="min-w-0">
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">النطاق الحالي لتطبيقك على GitHub:</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">
+                        الأصل المطلوب نسخه (JavaScript Origin مع https://):
+                      </div>
                       <div className="font-mono text-xs font-black text-blue-700 dark:text-blue-300 truncate">
-                        {typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي'}
+                        {typeof window !== 'undefined' ? window.location.origin : 'https://anaskourdi4.github.io'}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -2548,29 +2545,46 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                         type="button"
                         onClick={() => {
                           if (typeof window !== 'undefined') {
-                            navigator.clipboard.writeText(window.location.hostname);
+                            navigator.clipboard.writeText(window.location.origin);
                             setCopiedDomain(true);
                             setTimeout(() => setCopiedDomain(false), 2500);
                           }
                         }}
-                        className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-900 dark:text-blue-100 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                        className="px-3 py-1.5 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
                       >
-                        <Copy className="w-3 h-3" />
-                        <span>{copiedDomain ? 'تم النسخ ✓' : 'نسخ النطاق'}</span>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{copiedDomain ? 'تم النسخ ✓' : 'نسخ الأصل (Origin)'}</span>
                       </button>
-                      <a
-                        href="https://console.firebase.google.com/project/gen-lang-client-0584558035/authentication/settings"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-2.5 py-1 text-[11px] font-extrabold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-                      >
-                        <span>فتح إعدادات Firebase</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
                     </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                    خطوات الحل: انقر «نسخ النطاق» ➔ افتح إعدادات Firebase ➔ في تبويب «Settings» ➔ «Authorized domains» اضغط «Add domain» والصق النطاق.
+
+                  <div className="p-3 bg-white/70 dark:bg-slate-900/70 rounded-xl space-y-2 text-[11px] leading-relaxed">
+                    <div className="font-bold text-slate-900 dark:text-white">خطوات الحل في دقيقة واحدة:</div>
+                    <ol className="list-decimal list-inside space-y-1.5 text-slate-700 dark:text-slate-300">
+                      <li>
+                        اضغط زر <strong>«نسخ الأصل (Origin)»</strong> في الأعلى (ينسخ الرابط مع https://).
+                      </li>
+                      <li>
+                        افتح الرابط المباشر إلى{' '}
+                        <a
+                          href="https://console.cloud.google.com/apis/credentials?project=gen-lang-client-0584558035"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-bold text-blue-600 dark:text-blue-400 underline inline-flex items-center gap-0.5"
+                        >
+                          Google Cloud Credentials <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </li>
+                      <li>
+                        تحت قسم <strong>OAuth 2.0 Client IDs</strong>، اضغط على اسم معرّف العميل (Web client).
+                      </li>
+                      <li>
+                        في قسم <strong>أصول JavaScript المصرح بها (Authorized JavaScript origins)</strong> اضغط <strong>إضافة عنوان URI (+ ADD URI)</strong> والصق الرابط المنسوخ.
+                      </li>
+                      <li>
+                        اضغط <strong>حفظ (Save)</strong> في أسفل الصفحة، ثم عُد واضغط زر تسجيل الدخول مجدداً!
+                      </li>
+                    </ol>
                   </div>
                 </div>
 
