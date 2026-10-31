@@ -174,15 +174,20 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
 
   if (
     errCode === 'auth/popup-closed-by-user' ||
+    errCode === 'popup_closed' ||
+    errCode === 'popup_failed_to_open' ||
     errMessage.includes('popup-closed-by-user') ||
+    errMessage.includes('Popup window closed') ||
+    errMessage.includes('popup_closed') ||
     errMessage.includes('Cross-Origin-Opener-Policy') ||
     errMessage.includes('window.closed')
   ) {
     customErr.errorType = 'popup-closed';
     const isGitHub = currentHost.includes('github.io');
+    const origin = typeof window !== 'undefined' ? window.location.origin : `https://${currentHost}`;
     customErr.message = isGitHub
-      ? `أغلق المتصفح النافذة المنبثقة أو حظرها بسبب سياسة (Cross-Origin-Opener-Policy - COOP) المطبقة في متصفحات Chromium على استضافة GitHub Pages.\n\nالحل الأكيد: استخدم زر "دخول مباشر (Google GIS)" أدناه، فهو يتواصل عبر قناة آمنة ومحصنة ضد حظر COOP وعزل التخزين!`
-      : `تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية. إذا تم إغلاقها تلقائياً، يرجى استخدام زر "دخول مباشر (Google GIS)".`;
+      ? `تم إغلاق نافذة تسجيل الدخول. إذا ظهر لك خطأ (Error 400: origin_mismatch) داخل النافذة قبل إغلاقها، فيرجى إضافة الرابط (${origin}) إلى Authorized JavaScript origins في Google Cloud Console كما هو موضح بالأسفل.`
+      : `تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.`;
     return customErr;
   }
 
