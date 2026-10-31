@@ -1,5 +1,13 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
+import {
+  getAuth,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  User,
+  signOut
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { VocabSet, VocabItem, getVocabItemKey } from '../types';
 import { SHEET_HEADERS_17, vocabItemToSheetRow, parseGoogleSheetRows } from './vocabParser';
@@ -16,6 +24,8 @@ const TOKEN_EXPIRY_KEY = 'deutsch_meister_google_token_exp_v1';
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
+let redirectHandlingPromise: Promise<{ user: User; accessToken: string } | null> | null = null;
+let lastRedirectError: GoogleAuthError | null = null;
 
 export function getStoredAccessToken(): string | null {
   if (cachedAccessToken) return cachedAccessToken;
@@ -63,11 +73,145 @@ export function broadcastAutoSyncStatus(event: AutoSyncStatusEvent) {
   }
 }
 
+export interface GoogleAuthError extends Error {
+  code?: string;
+  domain?: string;
+  projectId?: string;
+  errorType?: 'unauthorized-domain' | 'popup-blocked' | 'operation-not-allowed' | 'popup-closed' | 'cookies' | 'redirect-cancelled' | 'generic';
+}
+
+export function parseGoogleAuthError(error: any): GoogleAuthError {
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي';
+  const projectId = firebaseConfig.projectId;
+  const errCode = error?.code || '';
+  const errMessage = error?.message || '';
+
+  const customErr: GoogleAuthError = new Error();
+  customErr.code = errCode;
+  customErr.domain = currentHost;
+  customErr.projectId = projectId;
+
+  if (
+    errCode === 'auth/unauthorized-domain' ||
+    errMessage.includes('auth/unauthorized-domain') ||
+    errMessage.includes('unauthorized-domain')
+  ) {
+    customErr.errorType = 'unauthorized-domain';
+    customErr.message = `النطاق الحالي (${currentHost}) غير مصرح به في Firebase Authentication. يجب إضافته إلى قائمة Authorized Domains في لوحة تحكم Firebase Console.`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'auth/operation-not-allowed' ||
+    errMessage.includes('operation-not-allowed')
+  ) {
+    customErr.errorType = 'operation-not-allowed';
+    customErr.message = `تسجيل الدخول عبر Google غير مفعّل في لوحة Firebase Console. يرجى تفعيله من: Authentication > Sign-in method > Google.`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'auth/popup-blocked' ||
+    errMessage.includes('popup-blocked') ||
+    errMessage.includes('blocked by the browser')
+  ) {
+    customErr.errorType = 'popup-blocked';
+    customErr.message = `تم حظر النافذة من المتصفح. التطبيق يستخدم الآن التوجيه المباشر (Redirect) لتفادي حظر النوافذ.`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'auth/redirect-cancelled-by-user' ||
+    errMessage.includes('redirect-cancelled-by-user')
+  ) {
+    customErr.errorType = 'redirect-cancelled';
+    customErr.message = `تم إلغاء عملية تسجيل الدخول من قبل المستخدم.`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'auth/network-request-failed' ||
+    errMessage.includes('network-request-failed')
+  ) {
+    customErr.errorType = 'cookies';
+    customErr.message = `تعذر الاتصال بـ Firebase. قد يكون السبب حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies) في المتصفح أو انقطاع مؤقت بالإنترنت.`;
+    return customErr;
+  }
+
+  customErr.errorType = 'generic';
+  customErr.message = errMessage || 'فشل تسجيل الدخول بحساب Google. يرجى المحاولة مرة أخرى.';
+  return customErr;
+}
+
+export function getLastAuthError(): GoogleAuthError | null {
+  return lastRedirectError;
+}
+
+export const handleRedirectResult = (): Promise<{ user: User; accessToken: string } | null> => {
+  if (!redirectHandlingPromise) {
+    redirectHandlingPromise = (async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result && result.user) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential?.accessToken) {
+            cachedAccessToken = credential.accessToken;
+            storeAccessToken(cachedAccessToken);
+            broadcastAutoSyncStatus({
+              status: 'idle',
+              message: `مرحباً ${result.user.displayName || result.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
+            });
+            window.dispatchEvent(
+              new CustomEvent('app:auth-redirect-success', {
+                detail: { user: result.user, accessToken: credential.accessToken }
+              })
+            );
+            return { user: result.user, accessToken: credential.accessToken };
+          }
+        }
+        return null;
+      } catch (error: any) {
+        const formatted = parseGoogleAuthError(error);
+        lastRedirectError = formatted;
+        console.warn('Firebase getRedirectResult error:', error);
+        window.dispatchEvent(
+          new CustomEvent('app:auth-redirect-error', {
+            detail: formatted
+          })
+        );
+        throw formatted;
+      }
+    })();
+  }
+  return redirectHandlingPromise;
+};
+
 export const initGoogleAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Always trigger handleRedirectResult on startup to catch returned redirect tokens
+  handleRedirectResult()
+    .then((result) => {
+      if (result && result.user && result.accessToken) {
+        if (onAuthSuccess) {
+          onAuthSuccess(result.user, result.accessToken);
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('Redirect auth result caught in initGoogleAuth:', err);
+    });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
+    // If redirect is still resolving, wait for it
+    if (redirectHandlingPromise) {
+      try {
+        await redirectHandlingPromise;
+      } catch (e) {
+        // Handled in catch above
+      }
+    }
     if (user) {
       const validToken = getStoredAccessToken();
       if (validToken) {
@@ -84,95 +228,19 @@ export const initGoogleAuth = (
   });
 };
 
-export interface GoogleAuthError extends Error {
-  code?: string;
-  domain?: string;
-  projectId?: string;
-  errorType?: 'unauthorized-domain' | 'popup-blocked' | 'operation-not-allowed' | 'popup-closed' | 'cookies' | 'generic';
-}
-
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('لم يتم الحصول على رمز الوصول من حساب Google.');
-    }
-
-    cachedAccessToken = credential.accessToken;
-    storeAccessToken(cachedAccessToken);
-    return { user: result.user, accessToken: cachedAccessToken };
+    lastRedirectError = null;
+    await signInWithRedirect(auth, provider);
+    // In browser environment, signInWithRedirect navigates the window to accounts.google.com
+    return null;
   } catch (error: any) {
-    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي';
-    const projectId = firebaseConfig.projectId;
-    const errCode = error?.code || '';
-    const errMessage = error?.message || '';
-
-    const customErr: GoogleAuthError = new Error();
-    customErr.code = errCode;
-    customErr.domain = currentHost;
-    customErr.projectId = projectId;
-
-    if (
-      errCode === 'auth/unauthorized-domain' ||
-      errMessage.includes('auth/unauthorized-domain') ||
-      errMessage.includes('unauthorized-domain')
-    ) {
-      customErr.errorType = 'unauthorized-domain';
-      customErr.message = `النطاق الحالي (${currentHost}) غير مصرح به في Firebase Authentication. يجب إضافته إلى قائمة Authorized Domains في لوحة تحكم Firebase.`;
-      console.warn('Firebase unauthorized domain:', currentHost, error);
-      throw customErr;
-    }
-
-    if (
-      errCode === 'auth/popup-blocked' ||
-      errMessage.includes('popup-blocked') ||
-      errMessage.includes('blocked by the browser')
-    ) {
-      customErr.errorType = 'popup-blocked';
-      customErr.message = `قام المتصفح بحظر النافذة المنبثقة (Pop-up Blocked). يرجى النقر على أيقونة النوافذ المنبثقة في شريط العنوان بالمتصفح واختيار "السماح دائماً بالنوافذ المنبثقة من هذا الموقع" ثم إعادة المحاولة.`;
-      console.warn('Firebase popup blocked:', error);
-      throw customErr;
-    }
-
-    if (
-      errCode === 'auth/operation-not-allowed' ||
-      errMessage.includes('operation-not-allowed')
-    ) {
-      customErr.errorType = 'operation-not-allowed';
-      customErr.message = `تسجيل الدخول عبر Google غير مفعّل في لوحة Firebase Console. يرجى تفعيله من: Authentication > Sign-in method > Google.`;
-      console.warn('Firebase Google provider disabled:', error);
-      throw customErr;
-    }
-
-    if (
-      errCode === 'auth/popup-closed-by-user' ||
-      errCode === 'auth/cancelled-popup-request' ||
-      errMessage.includes('popup-closed-by-user')
-    ) {
-      customErr.errorType = 'popup-closed';
-      customErr.message = `تم إغلاق نافذة تسجيل الدخول قبل إتمام المصادقة. يرجى النقر مرة أخرى والمتابعة حتى النهاية.`;
-      console.warn('Google sign-in popup closed by user');
-      throw customErr;
-    }
-
-    if (
-      errCode === 'auth/network-request-failed' ||
-      errMessage.includes('network-request-failed')
-    ) {
-      customErr.errorType = 'cookies';
-      customErr.message = `تعذر الاتصال بـ Firebase. قد يكون السبب حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies) في المتصفح أو انقطاع مؤقت بالإنترنت.`;
-      console.warn('Firebase network / cookie error:', error);
-      throw customErr;
-    }
-
-    customErr.errorType = 'generic';
-    customErr.message = errMessage || 'فشل تسجيل الدخول بحساب Google. يرجى المحاولة مرة أخرى.';
-    console.warn('Google Sign-In notice:', error);
-    throw customErr;
-  } finally {
     isSigningIn = false;
+    const formattedErr = parseGoogleAuthError(error);
+    lastRedirectError = formattedErr;
+    console.warn('Google Sign-In redirect notice:', error);
+    throw formattedErr;
   }
 };
 

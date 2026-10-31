@@ -400,8 +400,9 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
       }
     } catch (e: any) {
       if (
+        e?.code === 'auth/redirect-cancelled-by-user' ||
+        e?.errorType === 'redirect-cancelled' ||
         e?.code === 'auth/popup-closed-by-user' ||
-        e?.code === 'auth/cancelled-popup-request' ||
         e?.message?.includes('popup-closed-by-user')
       ) {
         return;

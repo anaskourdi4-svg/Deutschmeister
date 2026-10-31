@@ -1063,14 +1063,15 @@ export const VocabManager: React.FC<VocabManagerProps> = ({
       }
     } catch (err: any) {
       if (
+        err?.code === 'auth/redirect-cancelled-by-user' ||
+        err?.errorType === 'redirect-cancelled' ||
         err?.code === 'auth/popup-closed-by-user' ||
-        err?.code === 'auth/cancelled-popup-request' ||
         err?.message?.includes('popup-closed-by-user')
       ) {
         return;
       }
       console.warn('Sign-in notice:', err);
-      showToast('Could not sign in with Google account.');
+      showToast(err.message || 'Could not sign in with Google account.');
     } finally {
       setIsGoogleLoading(false);
     }

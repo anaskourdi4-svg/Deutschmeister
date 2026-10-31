@@ -55,6 +55,7 @@ import {
   mergeRemoteDecksWithLocalDecks,
   formatSyncChangesMessage,
   GoogleAuthError,
+  getLastAuthError,
 } from '../services/googleSheets';
 import { User } from 'firebase/auth';
 
@@ -160,19 +161,59 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
   const [confirmPullModalOpen, setConfirmPullModalOpen] = useState(false);
   const [pendingPullData, setPendingPullData] = useState<{ title: string; decks: VocabSet[] } | null>(null);
 
-  // Listen for Google Auth changes
+  // Listen for Google Auth changes and redirect results
   useEffect(() => {
     const unsub = initGoogleAuth(
       (user, token) => {
         setCurrentUser(user);
         setCurrentAccessToken(token);
+        loadDriveFiles(token);
       },
       () => {
         setCurrentUser(null);
         setCurrentAccessToken(null);
       }
     );
-    return () => unsub();
+
+    const handleRedirectSuccess = (e: Event) => {
+      const ce = e as CustomEvent<{ user: any; accessToken: string }>;
+      if (ce.detail?.user) {
+        setSyncFeedback({
+          type: 'success',
+          message: `مرحباً ${ce.detail.user.displayName || ce.detail.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
+        });
+      }
+    };
+
+    const handleRedirectErr = (e: Event) => {
+      const ce = e as CustomEvent<GoogleAuthError>;
+      if (ce.detail) {
+        setAuthErrorInfo(ce.detail);
+        setIsSyncModalOpen(true);
+        setSyncFeedback({
+          type: 'error',
+          message: ce.detail.message || 'فشل تسجيل الدخول بحساب Google'
+        });
+      }
+    };
+
+    window.addEventListener('app:auth-redirect-success', handleRedirectSuccess);
+    window.addEventListener('app:auth-redirect-error', handleRedirectErr);
+
+    const initialErr = getLastAuthError();
+    if (initialErr) {
+      setAuthErrorInfo(initialErr);
+      setSyncFeedback({
+        type: 'error',
+        message: initialErr.message || 'فشل تسجيل الدخول بحساب Google'
+      });
+    }
+
+    return () => {
+      unsub();
+      window.removeEventListener('app:auth-redirect-success', handleRedirectSuccess);
+      window.removeEventListener('app:auth-redirect-error', handleRedirectErr);
+    };
   }, []);
 
   const loadDriveFiles = async (token: string) => {
@@ -189,7 +230,10 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
 
   const handleGoogleLogin = async () => {
     setIsAuthLoading(true);
-    setSyncFeedback(null);
+    setSyncFeedback({
+      type: 'pending',
+      message: 'جارٍ توجيهك إلى Google لتسجيل الدخول بأمان (signInWithRedirect)...'
+    });
     setAuthErrorInfo(null);
     try {
       const res = await googleSignIn();
@@ -201,6 +245,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
           type: 'success',
           message: `مرحباً ${res.user.displayName || res.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
         });
+        setIsAuthLoading(false);
       }
     } catch (err: any) {
       console.warn('Google Sign-In notice:', err);
@@ -208,9 +253,8 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
       setIsSyncModalOpen(true);
       setSyncFeedback({
         type: 'error',
-        message: err.message || 'فشل تسجيل الدخول باستخدام حساب Google'
+        message: err.message || 'فشل توجيه تسجيل الدخول بحساب Google'
       });
-    } finally {
       setIsAuthLoading(false);
     }
   };
@@ -2469,28 +2513,23 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   </div>
                 </div>
 
-                {/* 2. Popup Blocked */}
+                {/* 2. Direct Redirect Authentication */}
                 <div className={`p-3 rounded-xl border space-y-1.5 ${
-                  authErrorInfo?.errorType === 'popup-blocked'
-                    ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-200 ring-2 ring-rose-400/30'
-                    : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                  authErrorInfo?.errorType === 'redirect-cancelled'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
+                    : 'bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/50 text-slate-700 dark:text-slate-300'
                 }`}>
                   <div className="font-extrabold flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-xs">
-                      <span className="w-2 h-2 rounded-full bg-rose-500" />
-                      2. حظر النوافذ المنبثقة في المتصفح (Pop-up Blocked)
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      2. التوجيه المباشر الآمن (signInWithRedirect)
                     </span>
-                    {authErrorInfo?.errorType === 'popup-blocked' && (
-                      <span className="text-[10px] bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-100 px-2 py-0.5 rounded-full font-black">
-                        السبب الحالي المؤكد
-                      </span>
-                    )}
+                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-black">
+                      مفعّل حالياً
+                    </span>
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    تقوم متصفحات Chrome و Safari بحظر النوافذ المنبثقة تلقائياً عند طلبها من بيئة إطار مضمّن (iframe).
-                  </p>
-                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                    الحل: انظر إلى شريط العنوان أعلى المتصفح، اضغط على أيقونة النافذة المحظورة 🚫 واختر «السماح دائماً بالنوافذ المنبثقة من هذا الموقع»، ثم أعد النقر على زر الدخول.
+                    يعتمد التطبيق الآن على توجيه الصفحة المباشر (Redirect) لتسجيل الدخول بدلاً من النوافذ المنبثقة (Popup)، مما يمنع حظر النوافذ تلقائياً من قبل المتصفح.
                   </p>
                 </div>
 
