@@ -387,7 +387,7 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
   // Quick Login
   const handleQuickLogin = async () => {
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn({ method: 'popup', fallbackToRedirect: false });
       if (res) {
         setCurrentUser(res.user);
         setAccessToken(res.accessToken);
@@ -403,6 +403,7 @@ export function useAutoSync({ vocabSets, onSyncAllSets }: UseAutoSyncProps) {
         e?.code === 'auth/redirect-cancelled-by-user' ||
         e?.errorType === 'redirect-cancelled' ||
         e?.code === 'auth/popup-closed-by-user' ||
+        e?.errorType === 'popup-closed' ||
         e?.message?.includes('popup-closed-by-user')
       ) {
         return;

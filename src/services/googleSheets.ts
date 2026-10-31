@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
@@ -73,6 +74,8 @@ export function broadcastAutoSyncStatus(event: AutoSyncStatusEvent) {
   }
 }
 
+const REDIRECT_PENDING_KEY = 'deutsch_meister_auth_redirect_pending_v1';
+
 export interface GoogleAuthError extends Error {
   code?: string;
   domain?: string;
@@ -97,7 +100,7 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
     errMessage.includes('unauthorized-domain')
   ) {
     customErr.errorType = 'unauthorized-domain';
-    customErr.message = `النطاق الحالي (${currentHost}) غير مصرح به في Firebase Authentication. يجب إضافته إلى قائمة Authorized Domains في لوحة تحكم Firebase Console.`;
+    customErr.message = `النطاق الحالي (${currentHost}) غير مصرح به في Firebase Authentication. يجب إضافته إلى قائمة Authorized Domains في لوحة تحكم Firebase Console لكي ينجح تسجيل الدخول على GitHub Pages.`;
     return customErr;
   }
 
@@ -116,7 +119,16 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
     errMessage.includes('blocked by the browser')
   ) {
     customErr.errorType = 'popup-blocked';
-    customErr.message = `تم حظر النافذة من المتصفح. التطبيق يستخدم الآن التوجيه المباشر (Redirect) لتفادي حظر النوافذ.`;
+    customErr.message = `تم حظر النافذة المنبثقة من قبل متصفحك. يرجى السماح بالنوافذ المنبثقة لهذا الموقع من شريط العنوان، أو استخدام خيار التوجيه (Redirect).`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'auth/popup-closed-by-user' ||
+    errMessage.includes('popup-closed-by-user')
+  ) {
+    customErr.errorType = 'popup-closed';
+    customErr.message = `تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.`;
     return customErr;
   }
 
@@ -130,11 +142,13 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
   }
 
   if (
+    errCode === 'auth/redirect-storage-partitioned' ||
     errCode === 'auth/network-request-failed' ||
-    errMessage.includes('network-request-failed')
+    errMessage.includes('network-request-failed') ||
+    errMessage.includes('Storage Partitioning')
   ) {
     customErr.errorType = 'cookies';
-    customErr.message = `تعذر الاتصال بـ Firebase. قد يكون السبب حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies) في المتصفح أو انقطاع مؤقت بالإنترنت.`;
+    customErr.message = errMessage || `تعذر نقل بيانات الجلسة بين استضافة GitHub وFirebase بسبب عزل ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies / Storage Partitioning). استخدم زر النافذة المنبثقة (Popup).`;
     return customErr;
   }
 
@@ -152,7 +166,15 @@ export const handleRedirectResult = (): Promise<{ user: User; accessToken: strin
     redirectHandlingPromise = (async () => {
       try {
         const result = await getRedirectResult(auth);
+        
+        let pendingAttempt: { timestamp: number } | null = null;
+        try {
+          const raw = sessionStorage.getItem(REDIRECT_PENDING_KEY);
+          if (raw) pendingAttempt = JSON.parse(raw);
+        } catch (e) {}
+
         if (result && result.user) {
+          try { sessionStorage.removeItem(REDIRECT_PENDING_KEY); } catch (e) {}
           const credential = GoogleAuthProvider.credentialFromResult(result);
           if (credential?.accessToken) {
             cachedAccessToken = credential.accessToken;
@@ -169,8 +191,36 @@ export const handleRedirectResult = (): Promise<{ user: User; accessToken: strin
             return { user: result.user, accessToken: credential.accessToken };
           }
         }
+
+        // Detect silent redirect drop on GitHub Pages:
+        // If result is null, but we recorded an active redirect request in this session within the last 15 minutes:
+        if (pendingAttempt && Date.now() - pendingAttempt.timestamp < 15 * 60 * 1000) {
+          try { sessionStorage.removeItem(REDIRECT_PENDING_KEY); } catch (e) {}
+          const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'github.io';
+          const isGitHub = currentHost.includes('github.io');
+          
+          const partitionErr: GoogleAuthError = new Error(
+            isGitHub
+              ? `عاد المتصفح من صفحة Google دون إكمال تسجيل الدخول. هذا ناتج عن حظر المتصفح لملفات تعريف الارتباط وطبقة التخزين المشتركة (Storage Partitioning / Third-Party Cookies) بين نطاق (${currentHost}) ونطاق Firebase.\n\nالحل الفوري: اضغط على زر "تسجيل الدخول عبر نافذة منبثقة (Popup)"، وتأكد من إضافة النطاق إلى قائمة Authorized Domains في Firebase.`
+              : `عاد المتصفح من صفحة Google دون استرجاع بيانات الجلسة. يرجى تجربة تسجيل الدخول عبر نافذة منبثقة (Popup) أو فحص ملفات تعريف الارتباط.`
+          );
+          partitionErr.code = 'auth/redirect-storage-partitioned';
+          partitionErr.errorType = 'cookies';
+          partitionErr.domain = currentHost;
+          partitionErr.projectId = firebaseConfig.projectId;
+          lastRedirectError = partitionErr;
+
+          window.dispatchEvent(
+            new CustomEvent('app:auth-redirect-error', {
+              detail: partitionErr
+            })
+          );
+          throw partitionErr;
+        }
+
         return null;
       } catch (error: any) {
+        try { sessionStorage.removeItem(REDIRECT_PENDING_KEY); } catch (e) {}
         const formatted = parseGoogleAuthError(error);
         lastRedirectError = formatted;
         console.warn('Firebase getRedirectResult error:', error);
@@ -228,15 +278,75 @@ export const initGoogleAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export interface GoogleSignInOptions {
+  method?: 'popup' | 'redirect';
+  fallbackToRedirect?: boolean;
+}
+
+export const googleSignIn = async (
+  options: GoogleSignInOptions = {}
+): Promise<{ user: User; accessToken: string } | null> => {
+  const method = options.method || 'popup'; // Default to popup because it's immune to GitHub Pages storage partitioning
+
+  if (method === 'popup') {
+    try {
+      isSigningIn = true;
+      lastRedirectError = null;
+      const result = await signInWithPopup(auth, provider);
+      isSigningIn = false;
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        cachedAccessToken = credential.accessToken;
+        storeAccessToken(cachedAccessToken);
+        broadcastAutoSyncStatus({
+          status: 'idle',
+          message: `مرحباً ${result.user.displayName || result.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
+        });
+        window.dispatchEvent(
+          new CustomEvent('app:auth-redirect-success', {
+            detail: { user: result.user, accessToken: credential.accessToken }
+          })
+        );
+        return { user: result.user, accessToken: credential.accessToken };
+      }
+      return null;
+    } catch (error: any) {
+      isSigningIn = false;
+      if (
+        (error?.code === 'auth/popup-blocked' || error?.message?.includes('popup-blocked')) &&
+        options.fallbackToRedirect
+      ) {
+        console.warn('Popup blocked by browser, falling back to redirect...');
+        return googleSignIn({ method: 'redirect' });
+      }
+      const formattedErr = parseGoogleAuthError(error);
+      lastRedirectError = formattedErr;
+      console.warn('Google Sign-In popup notice:', error);
+      throw formattedErr;
+    }
+  }
+
+  // Redirect method
   try {
     isSigningIn = true;
     lastRedirectError = null;
+    try {
+      sessionStorage.setItem(
+        REDIRECT_PENDING_KEY,
+        JSON.stringify({
+          timestamp: Date.now(),
+          href: window.location.href,
+          origin: window.location.origin
+        })
+      );
+    } catch (e) {}
+
     await signInWithRedirect(auth, provider);
     // In browser environment, signInWithRedirect navigates the window to accounts.google.com
     return null;
   } catch (error: any) {
     isSigningIn = false;
+    try { sessionStorage.removeItem(REDIRECT_PENDING_KEY); } catch (e) {}
     const formattedErr = parseGoogleAuthError(error);
     lastRedirectError = formattedErr;
     console.warn('Google Sign-In redirect notice:', error);

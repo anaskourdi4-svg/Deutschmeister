@@ -228,15 +228,17 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (mode: 'popup' | 'redirect' = 'popup') => {
     setIsAuthLoading(true);
     setSyncFeedback({
       type: 'pending',
-      message: 'جارٍ توجيهك إلى Google لتسجيل الدخول بأمان (signInWithRedirect)...'
+      message: mode === 'popup'
+        ? 'جارٍ فتح نافذة Google لتسجيل الدخول بأمان (Popup)...'
+        : 'جارٍ توجيهك إلى صفحة Google لتسجيل الدخول (Redirect)...'
     });
     setAuthErrorInfo(null);
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn({ method: mode, fallbackToRedirect: false });
       if (res) {
         setCurrentUser(res.user);
         setCurrentAccessToken(res.accessToken);
@@ -253,7 +255,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
       setIsSyncModalOpen(true);
       setSyncFeedback({
         type: 'error',
-        message: err.message || 'فشل توجيه تسجيل الدخول بحساب Google'
+        message: err.message || 'فشل تسجيل الدخول بحساب Google'
       });
       setIsAuthLoading(false);
     }
@@ -2366,7 +2368,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                 </div>
               )}
 
-              <div className="shrink-0 w-full sm:w-auto">
+              <div className="shrink-0 w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 {currentUser ? (
                   <button
                     type="button"
@@ -2376,28 +2378,41 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                     تسجيل الخروج / Sign out
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={isAuthLoading}
-                    onClick={handleGoogleLogin}
-                    className="gsi-material-button w-full sm:w-auto"
-                  >
-                    <div className="gsi-material-button-state"></div>
-                    <div className="gsi-material-button-content-wrapper">
-                      <div className="gsi-material-button-icon">
-                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
-                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                          <path fill="none" d="M0 0h48v48H0z"></path>
-                        </svg>
+                  <>
+                    <button
+                      type="button"
+                      disabled={isAuthLoading}
+                      onClick={() => handleGoogleLogin('popup')}
+                      className="gsi-material-button w-full sm:w-auto shadow-xs"
+                      title="تسجيل الدخول عبر نافذة منبثقة (موصى به لاستضافة GitHub Pages)"
+                    >
+                      <div className="gsi-material-button-state"></div>
+                      <div className="gsi-material-button-content-wrapper">
+                        <div className="gsi-material-button-icon">
+                          <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
+                            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                            <path fill="none" d="M0 0h48v48H0z"></path>
+                          </svg>
+                        </div>
+                        <span className="gsi-material-button-contents font-black text-xs">
+                          {isAuthLoading ? 'Connecting...' : 'دخول بحساب Google (نافذة Popup)'}
+                        </span>
                       </div>
-                      <span className="gsi-material-button-contents">
-                        {isAuthLoading ? 'Connecting...' : 'Sign in with Google'}
-                      </span>
-                    </div>
-                  </button>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isAuthLoading}
+                      onClick={() => handleGoogleLogin('redirect')}
+                      className="px-3 py-2 bg-slate-200/90 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      title="تسجيل الدخول عبر توجيه الصفحة"
+                    >
+                      توجيه (Redirect)
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -2455,7 +2470,42 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   )}
                 </div>
 
-                {/* 1. Unauthorized Domain (Most Common in Cloud Run / AI Studio preview) */}
+                {/* 0. Special GitHub Pages Alert Block */}
+                <div className="p-3.5 rounded-xl border bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/70 dark:to-orange-950/50 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 space-y-2.5">
+                  <div className="font-black text-xs flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                      استضافة التطبيق على GitHub Pages (*.github.io)
+                    </span>
+                    <span className="text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-full font-black">
+                      مهم جداً
+                    </span>
+                  </div>
+                  <div className="text-[11px] leading-relaxed space-y-1.5">
+                    <p>
+                      <strong>لماذا تعود محاولة الدخول للواجهة دون تسجيل الحساب؟</strong>
+                    </p>
+                    <p className="text-slate-700 dark:text-slate-300">
+                      1) <strong className="text-slate-900 dark:text-white">عزل التخزين (Storage Partitioning):</strong> تمنع متصفحات Chrome وSafari وFirefox الحديثة مشاركة ملفات تعريف الارتباط والجلسات بين نطاق استضافتك على GitHub ونطاق Firebase عند استخدام التوجيه الكامل (Redirect)، مما يجعل التطبيق يعود فارغاً كأنه في وضع زائر.
+                    </p>
+                    <p className="text-emerald-800 dark:text-emerald-300 font-bold">
+                      ✓ <span className="underline">الحل المباشر:</span> اضغط على زر <strong>دخول بحساب Google (نافذة Popup)</strong> أدناه، فهو يتمم المصادقة فوراً دون إعادة تحميل الصفحة ويتجاوز مشكلة عزل التخزين تماماً.
+                    </p>
+                  </div>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      disabled={isAuthLoading}
+                      onClick={() => handleGoogleLogin('popup')}
+                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>تسجيل الدخول الآن عبر نافذة منبثقة (Popup) - حل مؤكد</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 1. Unauthorized Domain (Authorized Domain in Firebase Console) */}
                 <div className={`p-3 rounded-xl border space-y-2 ${
                   authErrorInfo?.errorType === 'unauthorized-domain'
                     ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
@@ -2473,11 +2523,11 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                     )}
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    Firebase يمنع تسجيل الدخول من أي نطاق (Domain) جديد أو بيئة معاينة سحابية ما لم تتم إضافته إلى قائمة النطاقات المصرح بها.
+                    Firebase يمنع تسجيل الدخول من أي نطاق (Domain) جديد ما لم تتم إضافته إلى قائمة النطاقات المصرح بها.
                   </p>
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-2.5 bg-slate-100 dark:bg-slate-800 rounded-lg">
                     <div className="min-w-0">
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">النطاق الحالي لتطبيقك:</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">النطاق الحالي لتطبيقك على GitHub:</div>
                       <div className="font-mono text-xs font-black text-blue-700 dark:text-blue-300 truncate">
                         {typeof window !== 'undefined' ? window.location.hostname : 'النطاق الحالي'}
                       </div>
@@ -2509,27 +2559,21 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                     </div>
                   </div>
                   <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                    خطوات الحل: انقر «نسخ النطاق» ➔ افتح إعدادات Firebase ➔ في قسم «Authorized domains» اضغط «Add domain» والصق النطاق.
+                    خطوات الحل: انقر «نسخ النطاق» ➔ افتح إعدادات Firebase ➔ في تبويب «Settings» ➔ «Authorized domains» اضغط «Add domain» والصق النطاق.
                   </div>
                 </div>
 
-                {/* 2. Direct Redirect Authentication */}
-                <div className={`p-3 rounded-xl border space-y-1.5 ${
-                  authErrorInfo?.errorType === 'redirect-cancelled'
-                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 ring-2 ring-amber-400/30'
-                    : 'bg-emerald-50/50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/50 text-slate-700 dark:text-slate-300'
-                }`}>
+                {/* 2. Popup vs Redirect Explanation */}
+                <div className="p-3 rounded-xl border bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 space-y-1.5">
                   <div className="font-extrabold flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-xs">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      2. التوجيه المباشر الآمن (signInWithRedirect)
-                    </span>
-                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-black">
-                      مفعّل حالياً
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      2. خيارات تسجيل الدخول (نافذة Popup مقابل التوجيه Redirect)
                     </span>
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    يعتمد التطبيق الآن على توجيه الصفحة المباشر (Redirect) لتسجيل الدخول بدلاً من النوافذ المنبثقة (Popup)، مما يمنع حظر النوافذ تلقائياً من قبل المتصفح.
+                    - <strong>نافذة منبثقة (Popup):</strong> الخيار الأفضل والأنسب لمواقع GitHub Pages، حيث يتم المصادقة عبر نافذة منفصلة بدون إعادة تحميل الصفحة.<br />
+                    - <strong>التوجيه (Redirect):</strong> يعيد توجيه الصفحة بالكامل، لكنه قد يفشل على بعض المتصفحات عند الاستضافة على نطاقات تختلف عن نطاق Firebase.
                   </p>
                 </div>
 
@@ -2541,10 +2585,10 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                 }`}>
                   <div className="font-extrabold text-xs flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-purple-500" />
-                    3. حظر ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies)
+                    3. ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies)
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    تتطلب خدمة Firebase المصادقة عبر نافذة منبثقة إمكانية قراءة ملفات تعريف الارتباط. في حال تفعيل "حظر ملفات تعريف ارتباط الطرف الثالث" في إعدادات الخصوصية، تفشل المصادقة فوراً.
+                    إذا كان المتصفح يمنع ملفات تعريف الارتباط لطرف ثالث بشكل مشدد، استخدم نافذة Popup وتأكد من تفعيل الكوكيز للموقع.
                   </p>
                 </div>
 
