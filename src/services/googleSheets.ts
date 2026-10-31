@@ -4,6 +4,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCredential,
   GoogleAuthProvider,
   onAuthStateChanged,
   User,
@@ -12,6 +13,12 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { VocabSet, VocabItem, getVocabItemKey } from '../types';
 import { SHEET_HEADERS_17, vocabItemToSheetRow, parseGoogleSheetRows } from './vocabParser';
+
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 export const auth = getAuth(app);
@@ -22,11 +29,53 @@ provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 const TOKEN_STORAGE_KEY = 'deutsch_meister_google_access_token_v1';
 const TOKEN_EXPIRY_KEY = 'deutsch_meister_google_token_exp_v1';
+const USER_STORAGE_KEY = 'deutsch_meister_google_user_v1';
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let redirectHandlingPromise: Promise<{ user: User; accessToken: string } | null> | null = null;
 let lastRedirectError: GoogleAuthError | null = null;
+
+export function getStoredUser(): any | null {
+  try {
+    const raw = localStorage.getItem(USER_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+}
+
+export function storeUserSession(user: any | null) {
+  try {
+    if (user) {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(USER_STORAGE_KEY);
+    }
+  } catch (e) {}
+}
+
+export function loadGsiScript(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return resolve();
+    if (window.google?.accounts?.oauth2) return resolve();
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => resolve());
+      if (window.google?.accounts?.oauth2) return resolve();
+      setTimeout(resolve, 1500);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => resolve();
+    document.head.appendChild(script);
+    setTimeout(resolve, 2000);
+  });
+}
 
 export function getStoredAccessToken(): string | null {
   if (cachedAccessToken) return cachedAccessToken;
@@ -125,10 +174,27 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
 
   if (
     errCode === 'auth/popup-closed-by-user' ||
-    errMessage.includes('popup-closed-by-user')
+    errMessage.includes('popup-closed-by-user') ||
+    errMessage.includes('Cross-Origin-Opener-Policy') ||
+    errMessage.includes('window.closed')
   ) {
     customErr.errorType = 'popup-closed';
-    customErr.message = `تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.`;
+    const isGitHub = currentHost.includes('github.io');
+    customErr.message = isGitHub
+      ? `أغلق المتصفح النافذة المنبثقة أو حظرها بسبب سياسة (Cross-Origin-Opener-Policy - COOP) المطبقة في متصفحات Chromium على استضافة GitHub Pages.\n\nالحل الأكيد: استخدم زر "دخول مباشر (Google GIS)" أدناه، فهو يتواصل عبر قناة آمنة ومحصنة ضد حظر COOP وعزل التخزين!`
+      : `تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية. إذا تم إغلاقها تلقائياً، يرجى استخدام زر "دخول مباشر (Google GIS)".`;
+    return customErr;
+  }
+
+  if (
+    errCode === 'origin_mismatch' ||
+    errCode === 'idpiframe_initialization_failed' ||
+    errMessage.includes('origin_mismatch') ||
+    errMessage.includes('idpiframe_initialization_failed')
+  ) {
+    customErr.errorType = 'unauthorized-domain';
+    const origin = typeof window !== 'undefined' ? window.location.origin : `https://${currentHost}`;
+    customErr.message = `أصل الموقع (${origin}) غير مصرّح به في Google OAuth Client. يرجى إضافته في Google Cloud Console ➔ APIs & Services ➔ Credentials ➔ Web Client ➔ Authorized JavaScript Origins.`;
     return customErr;
   }
 
@@ -148,7 +214,7 @@ export function parseGoogleAuthError(error: any): GoogleAuthError {
     errMessage.includes('Storage Partitioning')
   ) {
     customErr.errorType = 'cookies';
-    customErr.message = errMessage || `تعذر نقل بيانات الجلسة بين استضافة GitHub وFirebase بسبب عزل ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies / Storage Partitioning). استخدم زر النافذة المنبثقة (Popup).`;
+    customErr.message = errMessage || `تعذر نقل بيانات الجلسة بين استضافة GitHub وFirebase بسبب عزل ملفات تعريف الارتباط لطرف ثالث (Third-Party Cookies / Storage Partitioning). استخدم زر الدخول المباشر (Google GIS).`;
     return customErr;
   }
 
@@ -236,11 +302,135 @@ export const handleRedirectResult = (): Promise<{ user: User; accessToken: strin
   return redirectHandlingPromise;
 };
 
+export const signInWithGoogleGIS = async (): Promise<{ user: User; accessToken: string }> => {
+  await loadGsiScript();
+  if (!window.google?.accounts?.oauth2) {
+    throw new Error('لم يتمكن المتصفح من تحميل مكتبة Google Identity Services. يرجى التحقق من اتصال الإنترنت.');
+  }
+
+  const clientId = firebaseConfig.oAuthClientId;
+  if (!clientId) {
+    throw new Error('oAuthClientId غير موجود في إعدادات التطبيق');
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      let isSettled = false;
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email openid',
+        callback: async (tokenResponse: any) => {
+          if (isSettled) return;
+          if (tokenResponse.error) {
+            isSettled = true;
+            console.error('GIS Error response:', tokenResponse);
+            const err = parseGoogleAuthError({
+              code: tokenResponse.error,
+              message: tokenResponse.error_description || tokenResponse.error
+            });
+            reject(err);
+            return;
+          }
+
+          if (tokenResponse.access_token) {
+            isSettled = true;
+            const token = tokenResponse.access_token;
+            const expiresIn = Number(tokenResponse.expires_in) || 3500;
+            cachedAccessToken = token;
+            storeAccessToken(token, expiresIn);
+
+            let syntheticUser: any = null;
+            try {
+              const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              if (res.ok) {
+                const profile = await res.json();
+                syntheticUser = {
+                  uid: profile.sub || 'google_user_' + Date.now(),
+                  displayName: profile.name || profile.given_name || 'مستخدم Google',
+                  email: profile.email || '',
+                  photoURL: profile.picture || null,
+                  emailVerified: Boolean(profile.email_verified),
+                };
+              }
+            } catch (fetchErr) {
+              console.warn('Could not fetch userinfo from Google:', fetchErr);
+            }
+
+            if (!syntheticUser) {
+              syntheticUser = {
+                uid: 'google_user_' + Date.now(),
+                displayName: 'مستخدم Google',
+                email: '',
+                photoURL: null,
+                emailVerified: true,
+              };
+            }
+
+            // Attempt Firebase background auth with credential (non-blocking)
+            try {
+              const credential = GoogleAuthProvider.credential(null, token);
+              const fbRes = await signInWithCredential(auth, credential);
+              if (fbRes?.user) {
+                syntheticUser.uid = fbRes.user.uid;
+                if (fbRes.user.displayName) syntheticUser.displayName = fbRes.user.displayName;
+                if (fbRes.user.email) syntheticUser.email = fbRes.user.email;
+                if (fbRes.user.photoURL) syntheticUser.photoURL = fbRes.user.photoURL;
+              }
+            } catch (fbErr) {
+              console.log('Firebase background credential sign-in note (session active for Drive/Sheets):', fbErr);
+            }
+
+            storeUserSession(syntheticUser);
+
+            broadcastAutoSyncStatus({
+              status: 'idle',
+              message: `مرحباً ${syntheticUser.displayName || syntheticUser.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
+            });
+
+            window.dispatchEvent(
+              new CustomEvent('app:auth-redirect-success', {
+                detail: { user: syntheticUser, accessToken: token }
+              })
+            );
+
+            resolve({ user: syntheticUser as User, accessToken: token });
+          } else {
+            isSettled = true;
+            reject(new Error('لم يتم استلام مفتاح الوصول من Google'));
+          }
+        },
+        error_callback: (err: any) => {
+          if (isSettled) return;
+          isSettled = true;
+          console.error('GIS Error callback:', err);
+          reject(parseGoogleAuthError(err));
+        }
+      });
+
+      client.requestAccessToken({ prompt: 'select_account' });
+    } catch (e: any) {
+      reject(parseGoogleAuthError(e));
+    }
+  });
+};
+
 export const initGoogleAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  // Always trigger handleRedirectResult on startup to catch returned redirect tokens
+  // 1. Check if valid stored access token and user session already exist in browser
+  const storedToken = getStoredAccessToken();
+  const storedUser = getStoredUser();
+  if (storedToken && storedUser) {
+    cachedAccessToken = storedToken;
+    if (onAuthSuccess) {
+      onAuthSuccess(storedUser as User, storedToken);
+    }
+  }
+
+  // 2. Check handleRedirectResult on startup to catch returned redirect tokens
   handleRedirectResult()
     .then((result) => {
       if (result && result.user && result.accessToken) {
@@ -253,8 +443,8 @@ export const initGoogleAuth = (
       console.warn('Redirect auth result caught in initGoogleAuth:', err);
     });
 
+  // 3. Listen to Firebase auth state changes
   return onAuthStateChanged(auth, async (user: User | null) => {
-    // If redirect is still resolving, wait for it
     if (redirectHandlingPromise) {
       try {
         await redirectHandlingPromise;
@@ -266,27 +456,57 @@ export const initGoogleAuth = (
       const validToken = getStoredAccessToken();
       if (validToken) {
         cachedAccessToken = validToken;
+        storeUserSession({
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+          photoURL: user.photoURL,
+        });
         if (onAuthSuccess) onAuthSuccess(user, validToken);
       } else if (!isSigningIn) {
-        // User logged in to Firebase but OAuth token expired
         if (onAuthFailure) onAuthFailure();
       }
     } else {
-      storeAccessToken(null);
-      if (onAuthFailure) onAuthFailure();
+      const validToken = getStoredAccessToken();
+      const validUser = getStoredUser();
+      if (validToken && validUser) {
+        cachedAccessToken = validToken;
+        if (onAuthSuccess) onAuthSuccess(validUser as User, validToken);
+      } else {
+        storeAccessToken(null);
+        storeUserSession(null);
+        if (onAuthFailure) onAuthFailure();
+      }
     }
   });
 };
 
 export interface GoogleSignInOptions {
-  method?: 'popup' | 'redirect';
+  method?: 'gis' | 'popup' | 'redirect';
+  fallbackToGIS?: boolean;
   fallbackToRedirect?: boolean;
 }
 
 export const googleSignIn = async (
   options: GoogleSignInOptions = {}
 ): Promise<{ user: User; accessToken: string } | null> => {
-  const method = options.method || 'popup'; // Default to popup because it's immune to GitHub Pages storage partitioning
+  const method = options.method || 'gis'; // Default to GIS: 100% immune to COOP and Storage Partitioning on GitHub Pages!
+
+  if (method === 'gis') {
+    try {
+      isSigningIn = true;
+      lastRedirectError = null;
+      const res = await signInWithGoogleGIS();
+      isSigningIn = false;
+      return res;
+    } catch (error: any) {
+      isSigningIn = false;
+      const formattedErr = parseGoogleAuthError(error);
+      lastRedirectError = formattedErr;
+      console.warn('Google Sign-In GIS notice:', error);
+      throw formattedErr;
+    }
+  }
 
   if (method === 'popup') {
     try {
@@ -298,6 +518,12 @@ export const googleSignIn = async (
       if (credential?.accessToken) {
         cachedAccessToken = credential.accessToken;
         storeAccessToken(cachedAccessToken);
+        storeUserSession({
+          uid: result.user.uid,
+          displayName: result.user.displayName,
+          email: result.user.email,
+          photoURL: result.user.photoURL,
+        });
         broadcastAutoSyncStatus({
           status: 'idle',
           message: `مرحباً ${result.user.displayName || result.user.email || ''}! تم تسجيل الدخول بنجاح عبر حساب Google.`
@@ -312,12 +538,23 @@ export const googleSignIn = async (
       return null;
     } catch (error: any) {
       isSigningIn = false;
+      // If popup was blocked by browser
       if (
         (error?.code === 'auth/popup-blocked' || error?.message?.includes('popup-blocked')) &&
         options.fallbackToRedirect
       ) {
         console.warn('Popup blocked by browser, falling back to redirect...');
         return googleSignIn({ method: 'redirect' });
+      }
+      // If popup failed due to COOP / closed-by-user and fallbackToGIS is enabled (default true)
+      if (
+        (error?.code === 'auth/popup-closed-by-user' ||
+          error?.message?.includes('popup-closed-by-user') ||
+          error?.message?.includes('Cross-Origin-Opener-Policy')) &&
+        options.fallbackToGIS !== false
+      ) {
+        console.warn('Popup failed due to COOP / popup-closed. Seamlessly falling back to Google Identity Services (GIS)...');
+        return googleSignIn({ method: 'gis' });
       }
       const formattedErr = parseGoogleAuthError(error);
       lastRedirectError = formattedErr;
@@ -342,7 +579,6 @@ export const googleSignIn = async (
     } catch (e) {}
 
     await signInWithRedirect(auth, provider);
-    // In browser environment, signInWithRedirect navigates the window to accounts.google.com
     return null;
   } catch (error: any) {
     isSigningIn = false;
@@ -359,8 +595,11 @@ export const getAccessToken = (): string | null => {
 };
 
 export const googleLogout = async () => {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch (e) {}
   storeAccessToken(null);
+  storeUserSession(null);
   broadcastAutoSyncStatus({ status: 'unauthenticated', message: 'تم تسجيل الخروج من Google' });
 };
 

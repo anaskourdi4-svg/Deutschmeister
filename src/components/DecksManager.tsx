@@ -228,17 +228,19 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
     }
   };
 
-  const handleGoogleLogin = async (mode: 'popup' | 'redirect' = 'popup') => {
+  const handleGoogleLogin = async (mode: 'gis' | 'popup' | 'redirect' = 'gis') => {
     setIsAuthLoading(true);
     setSyncFeedback({
-      type: 'pending',
-      message: mode === 'popup'
-        ? 'جارٍ فتح نافذة Google لتسجيل الدخول بأمان (Popup)...'
+      type: 'pending' as any,
+      message: mode === 'gis'
+        ? 'جارٍ الاتصال المباشر بحساب Google (GIS - موصى به لـ GitHub)...'
+        : mode === 'popup'
+        ? 'جارٍ فتح نافذة Google لتسجيل الدخول (Popup)...'
         : 'جارٍ توجيهك إلى صفحة Google لتسجيل الدخول (Redirect)...'
     });
     setAuthErrorInfo(null);
     try {
-      const res = await googleSignIn({ method: mode, fallbackToRedirect: false });
+      const res = await googleSignIn({ method: mode, fallbackToGIS: true, fallbackToRedirect: false });
       if (res) {
         setCurrentUser(res.user);
         setCurrentAccessToken(res.accessToken);
@@ -2382,9 +2384,9 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                     <button
                       type="button"
                       disabled={isAuthLoading}
-                      onClick={() => handleGoogleLogin('popup')}
+                      onClick={() => handleGoogleLogin('gis')}
                       className="gsi-material-button w-full sm:w-auto shadow-xs"
-                      title="تسجيل الدخول عبر نافذة منبثقة (موصى به لاستضافة GitHub Pages)"
+                      title="تسجيل الدخول المباشر عبر Google (موصى به لاستضافة GitHub Pages ومحصن ضد حظر COOP)"
                     >
                       <div className="gsi-material-button-state"></div>
                       <div className="gsi-material-button-content-wrapper">
@@ -2398,7 +2400,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                           </svg>
                         </div>
                         <span className="gsi-material-button-contents font-black text-xs">
-                          {isAuthLoading ? 'Connecting...' : 'دخول بحساب Google (نافذة Popup)'}
+                          {isAuthLoading ? 'Connecting...' : 'دخول بحساب Google (مباشر GIS)'}
                         </span>
                       </div>
                     </button>
@@ -2406,9 +2408,19 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                     <button
                       type="button"
                       disabled={isAuthLoading}
+                      onClick={() => handleGoogleLogin('popup')}
+                      className="px-2.5 py-2 bg-slate-200/90 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      title="تسجيل الدخول عبر نافذة Firebase Popup"
+                    >
+                      نافذة Popup
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isAuthLoading}
                       onClick={() => handleGoogleLogin('redirect')}
-                      className="px-3 py-2 bg-slate-200/90 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
-                      title="تسجيل الدخول عبر توجيه الصفحة"
+                      className="px-2.5 py-2 bg-slate-200/90 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      title="تسجيل الدخول عبر توجيه الصفحة (Redirect)"
                     >
                       توجيه (Redirect)
                     </button>
@@ -2426,7 +2438,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1.5 cursor-pointer"
                 >
                   <HelpCircle className="w-3.5 h-3.5" />
-                  <span>لماذا قد يفشل تسجيل الدخول؟ (الأسباب الأكثر شيوعاً وحلولها)</span>
+                  <span>دليل تشخيص تسجيل الدخول وحل مشكلة GitHub Pages وCOOP</span>
                 </button>
               </div>
             )}
@@ -2457,7 +2469,7 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                 <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
                   <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                     <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
-                    <span>دليل حل مشكلات تسجيل الدخول بحساب Google</span>
+                    <span>دليل حل مشكلات تسجيل الدخول بحساب Google على GitHub Pages</span>
                   </div>
                   {showAuthDiagnostics && !authErrorInfo && (
                     <button
@@ -2470,37 +2482,36 @@ export const DecksManager: React.FC<DecksManagerProps> = ({
                   )}
                 </div>
 
-                {/* 0. Special GitHub Pages Alert Block */}
-                <div className="p-3.5 rounded-xl border bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/70 dark:to-orange-950/50 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 space-y-2.5">
+                {/* 0. Special GitHub Pages & COOP Alert Block */}
+                <div className="p-3.5 rounded-xl border bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/70 dark:to-teal-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-100 space-y-2.5">
                   <div className="font-black text-xs flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                      استضافة التطبيق على GitHub Pages (*.github.io)
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      حل مشكلة GitHub Pages و(Cross-Origin-Opener-Policy / COOP)
                     </span>
-                    <span className="text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-full font-black">
-                      مهم جداً
+                    <span className="text-[10px] bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 px-2 py-0.5 rounded-full font-black">
+                      موصى به 100%
                     </span>
                   </div>
                   <div className="text-[11px] leading-relaxed space-y-1.5">
-                    <p>
-                      <strong>لماذا تعود محاولة الدخول للواجهة دون تسجيل الحساب؟</strong>
-                    </p>
                     <p className="text-slate-700 dark:text-slate-300">
-                      1) <strong className="text-slate-900 dark:text-white">عزل التخزين (Storage Partitioning):</strong> تمنع متصفحات Chrome وSafari وFirefox الحديثة مشاركة ملفات تعريف الارتباط والجلسات بين نطاق استضافتك على GitHub ونطاق Firebase عند استخدام التوجيه الكامل (Redirect)، مما يجعل التطبيق يعود فارغاً كأنه في وضع زائر.
+                      <strong>سبب خطأ (Cross-Origin-Opener-Policy would block the window.closed call):</strong>
+                      <br />
+                      تطبق متصفحات Chromium (Chrome, Edge, Brave) حماية مشددة على النوافذ المنبثقة بين نطاق GitHub ونطاق Google، وتمنع فحص <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">window.closed</code> في نافذة Firebase مما يجعل المتصفح يعتقد خطأً أن النافذة أُغلقت (popup-closed-by-user).
                     </p>
-                    <p className="text-emerald-800 dark:text-emerald-300 font-bold">
-                      ✓ <span className="underline">الحل المباشر:</span> اضغط على زر <strong>دخول بحساب Google (نافذة Popup)</strong> أدناه، فهو يتمم المصادقة فوراً دون إعادة تحميل الصفحة ويتجاوز مشكلة عزل التخزين تماماً.
+                    <p className="text-emerald-800 dark:text-emerald-300 font-black">
+                      ✓ الحل النهائي المعتمد: زر "دخول بحساب Google (مباشر GIS)" أدناه. يتصل بخدمة Google Identity Services الرسمية مباشرة دون التحقق من window.closed ودون الحاجة لملفات تعريف ارتباط طرف ثالث!
                     </p>
                   </div>
                   <div className="pt-1">
                     <button
                       type="button"
                       disabled={isAuthLoading}
-                      onClick={() => handleGoogleLogin('popup')}
-                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                      onClick={() => handleGoogleLogin('gis')}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Check className="w-4 h-4" />
-                      <span>تسجيل الدخول الآن عبر نافذة منبثقة (Popup) - حل مؤكد</span>
+                      <span>تسجيل الدخول المباشر الآن عبر Google (GIS) - الحل الفوري</span>
                     </button>
                   </div>
                 </div>
